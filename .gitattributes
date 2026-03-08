@@ -1,0 +1,2 @@
+plugin/bin/osx-arm64/TokenSqueeze filter=lfs diff=lfs merge=lfs -text
+plugin/bin/win-x64/TokenSqueeze.exe filter=lfs diff=lfs merge=lfs -text

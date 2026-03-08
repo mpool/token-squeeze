@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/auto-index.sh",
+            "timeout": 120,
+            "statusMessage": "TokenSqueeze: checking index..."
+          }
+        ]
+      }
+    ]
+  }
+}
