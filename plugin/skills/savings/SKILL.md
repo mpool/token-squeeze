@@ -1,0 +1,78 @@
+---
+name: token-squeeze:savings
+description: Estimate how many tokens token-squeeze saved in the current context window
+argument-hint: ""
+allowed-tools: Bash
+disable-model-invocation: false
+---
+
+# Estimate Token Savings
+
+Produce a rough "bar napkin" estimate of how many tokens token-squeeze saved in this context window compared to reading full source files.
+
+## Platform Binary Detection
+
+Detect the platform and set the binary path:
+
+- **Windows:** `${CLAUDE_PLUGIN_ROOT}/bin/win-x64/token-squeeze.exe`
+- **macOS:** `${CLAUDE_PLUGIN_ROOT}/bin/osx-arm64/token-squeeze`
+
+## Step 1 — Gather Index Stats
+
+Run `<binary> list` and find the project matching the current working directory. Extract:
+
+- `fileCount` — number of indexed files
+- `symbolCount` — total symbols in the index
+
+If no matching project is found, tell the user to run `/token-squeeze:index` first and stop.
+
+## Step 2 — Review This Conversation
+
+Scan your conversation history for token-squeeze usage in this session. Count:
+
+- **Outline calls:** How many times you ran `outline` (via skill or CLI). Each outline replaces reading the full file — you got a compact symbol listing instead.
+- **Extract calls:** How many times you ran `extract` (via skill or CLI) and how many symbol IDs were requested total. Each extract pulled only a specific symbol body instead of reading the surrounding file.
+- **Find calls:** How many times you ran `find`. Each find avoided grepping through full source files.
+
+If you used no token-squeeze commands this session, say so and give a hypothetical estimate based on the index stats instead ("if you had used outline + extract instead of Read for the N indexed files, here's what you'd save").
+
+## Step 3 — Napkin Math
+
+Use these rough heuristics:
+
+| Metric | Estimate |
+|--------|----------|
+| Average tokens per source file (full read) | ~800 tokens |
+| Average tokens per outline response | ~120 tokens |
+| Average tokens per extract response (one symbol) | ~100 tokens |
+| Average tokens per find response | ~80 tokens |
+
+For each outline call, the savings = **~680 tokens** (avoided reading ~800, paid ~120).
+For each extract call, the savings = **~700 tokens per symbol** (avoided reading ~800, paid ~100).
+For each find call, the savings = **~720 tokens** (avoided grepping full files, paid ~80).
+
+Calculate:
+
+- **Tokens saved this session** = sum of savings from all calls above
+- **Percentage** = tokens saved / (tokens saved + tokens actually consumed by token-squeeze responses)
+
+## Step 4 — Present Results
+
+Present a concise summary like:
+
+```
+Token Squeeze Savings (estimated)
+─────────────────────────────────
+Project: <name> (N files, M symbols indexed)
+
+This session:
+  Outline calls:  X  → ~Y tokens saved
+  Extract calls:  X  → ~Y tokens saved
+  Find calls:     X  → ~Y tokens saved
+  ─────────────────────────────
+  Est. total saved:  ~Z tokens (~P% reduction)
+
+That's roughly equivalent to skipping N full file reads.
+```
+
+Keep the tone light — this is an estimate, not an audit. Remind the user these are rough numbers.

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-C# .NET 9 CLI + Claude Code plugin for tree-sitter-based codebase indexing and symbol retrieval. 
+C# .NET 9 CLI + Claude Code plugin for codebase indexing and symbol retrieval for token optimization. 
 
 ## Architecture
 
@@ -15,7 +15,7 @@ token-squeeze/
 │   │   ├── Commands/              # CLI command handlers
 │   │   ├── Infrastructure/        # Shared helpers
 │   │   │   └── JsonOutput.cs
-│   │   ├── Parser/                # tree-sitter AST extraction
+│   │   ├── Parser/                # AST extraction
 │   │   │   ├── LanguageSpec.cs
 │   │   │   ├── LanguageRegistry.cs
 │   │   │   └── SymbolExtractor.cs
@@ -101,13 +101,9 @@ Python, JavaScript, TypeScript, C#, C, C++
 2. Add test fixture `src/TokenSqueeze.Tests/Fixtures/sample.ext`
 3. Search all existing language ID strings (`"Python"`, `"JavaScript"`, etc.) to find every branch in `SymbolExtractor` that needs a case
 
-## Known Bugs
-
-No known unfixed bugs. Previously listed bugs (deleted-file ghosts, new-file invisibility, StoragePaths duplication, SaveFileFragment/RebuildSearchIndex missing validation) have all been resolved.
-
 ## What This Project Does NOT Have
 
-- No MCP server protocol
+- No MCP server protocol (CLI prefered)
 - No telemetry / token tracking
-- No file tree or full-text search commands (Claude has Glob/Grep)
-- Test project: `src/TokenSqueeze.Tests/` with xUnit; fixture files in `Fixtures/`
+- No file tree commands (use CLAUDE.md or other artifact)
+- No full-text search commands (Claude has Glob/Grep)
