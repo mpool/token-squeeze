@@ -19,8 +19,21 @@ function getClaudeConfigDir() {
   return path.join(os.homedir(), ".claude");
 }
 
-function getPluginDir() {
-  return path.join(getClaudeConfigDir(), "plugins", PLUGIN_NAME);
+const PLUGIN_KEY = `${PLUGIN_NAME}@npm`;
+
+function getPluginDir(version) {
+  return path.join(getClaudeConfigDir(), "plugins", "cache", "npm", PLUGIN_NAME, version);
+}
+
+function getPluginVersion(pluginSrc) {
+  const manifestPath = path.join(pluginSrc, ".claude-plugin", "plugin.json");
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      return manifest.version || "1.0.0";
+    } catch { /* fallback */ }
+  }
+  return "1.0.0";
 }
 
 function getPlatformKey() {
@@ -110,32 +123,22 @@ async function extractArchive(archivePath, destDir, platform) {
   }
 }
 
-function registerPlugin(pluginDir) {
-  const registryPath = path.join(getClaudeConfigDir(), "plugins", "installed_plugins.json");
-  const pluginKey = `${PLUGIN_NAME}@npm`;
+function registerPlugin(pluginDir, pluginVersion) {
+  const configDir = getClaudeConfigDir();
 
+  // 1. Register in installed_plugins.json
+  const registryPath = path.join(configDir, "plugins", "installed_plugins.json");
   let registry = { version: 2, plugins: {} };
   if (fs.existsSync(registryPath)) {
     try {
       registry = JSON.parse(fs.readFileSync(registryPath, "utf-8"));
     } catch {
-      // Corrupted file — start fresh but preserve version
       registry = { version: 2, plugins: {} };
     }
   }
 
-  // Read version from the plugin manifest we just copied
-  let pluginVersion = "1.0.0";
-  const manifestPath = path.join(pluginDir, ".claude-plugin", "plugin.json");
-  if (fs.existsSync(manifestPath)) {
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-      pluginVersion = manifest.version || pluginVersion;
-    } catch { /* use default */ }
-  }
-
   const now = new Date().toISOString();
-  registry.plugins[pluginKey] = [
+  registry.plugins[PLUGIN_KEY] = [
     {
       scope: "user",
       installPath: pluginDir,
@@ -146,7 +149,23 @@ function registerPlugin(pluginDir) {
   ];
 
   fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
-  console.log("Plugin registered in Claude Code.");
+
+  // 2. Enable in settings.json
+  const settingsPath = path.join(configDir, "settings.json");
+  let settings = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    } catch { /* start fresh */ }
+  }
+
+  if (!settings.enabledPlugins) {
+    settings.enabledPlugins = {};
+  }
+  settings.enabledPlugins[PLUGIN_KEY] = true;
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  console.log("Plugin registered and enabled in Claude Code.");
 }
 
 async function install() {
@@ -159,16 +178,19 @@ async function install() {
     process.exit(1);
   }
 
-  const pluginDir = getPluginDir();
-  console.log(`Installing ${PLUGIN_NAME} to ${pluginDir}`);
-
   // Find the plugin source directory (bundled in the npm package)
   const packageRoot = path.resolve(__dirname, "..");
   const pluginSrc = path.join(packageRoot, "plugin");
+  const pluginVersion = getPluginVersion(pluginSrc);
+  const pluginDir = getPluginDir(pluginVersion);
+  console.log(`Installing ${PLUGIN_NAME} v${pluginVersion} to ${pluginDir}`);
 
-  // Clean previous install
-  if (fs.existsSync(pluginDir)) {
-    fs.rmSync(pluginDir, { recursive: true });
+  // Clean previous install (this version and legacy location)
+  const legacyDir = path.join(getClaudeConfigDir(), "plugins", PLUGIN_NAME);
+  for (const dir of [pluginDir, legacyDir]) {
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true });
+    }
   }
 
   // Copy plugin files (skills, hooks, scripts, settings, .claude-plugin)
@@ -222,8 +244,8 @@ async function install() {
     console.error(`  cp plugin/bin/<platform>/* ${path.join(pluginDir, "bin", "<platform>")}/`);
   }
 
-  // Register plugin in Claude Code's installed_plugins.json
-  registerPlugin(pluginDir);
+  // Register plugin in Claude Code's installed_plugins.json and enable it
+  registerPlugin(pluginDir, pluginVersion);
 
   console.log(`\n${PLUGIN_NAME} installed successfully.`);
   console.log("Restart Claude Code to activate the plugin.");
