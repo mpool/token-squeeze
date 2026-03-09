@@ -7,7 +7,7 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class IndexCommand : Command<IndexCommand.Settings>
+internal sealed class IndexCommand(IndexStore store, LanguageRegistry registry) : Command<IndexCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -32,19 +32,18 @@ internal sealed class IndexCommand : Command<IndexCommand.Settings>
                 return 1;
             }
 
-            using var registry = new LanguageRegistry();
-            var store = new IndexStore();
             var indexer = new ProjectIndexer(store, registry);
 
-            var index = indexer.Index(path, settings.Name);
+            var result = indexer.Index(path, settings.Name);
 
             JsonOutput.Write(new
             {
-                projectName = index.ProjectName,
-                sourcePath = index.SourcePath,
-                filesIndexed = index.Files.Count,
-                symbolsExtracted = index.Symbols.Count,
-                indexPath = StoragePaths.GetIndexPath(index.ProjectName)
+                projectName = result.Index.ProjectName,
+                sourcePath = result.Index.SourcePath,
+                filesIndexed = result.Index.Files.Count,
+                symbolsExtracted = result.Index.Symbols.Count,
+                indexPath = StoragePaths.GetManifestPath(result.Index.ProjectName),
+                errorsEncountered = result.ErrorCount
             });
 
             return 0;

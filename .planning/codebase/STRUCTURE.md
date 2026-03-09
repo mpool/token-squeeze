@@ -7,180 +7,203 @@
 ```
 token-squeeze/
 ├── src/
-│   ├── token-squeeze.sln       # Solution file (single project)
-│   └── TokenSqueeze/           # Main .NET 9 console application
-│       ├── TokenSqueeze.csproj  # Project file (net9.0, self-contained publish)
-│       ├── Program.cs           # CLI entry point
-│       ├── Commands/            # Spectre.Console.Cli command handlers
-│       ├── Indexing/            # Directory walking + project indexer orchestration
-│       ├── Infrastructure/      # Cross-cutting helpers (JSON output)
-│       ├── Models/              # Data records (Symbol, CodeIndex, IndexedFile)
-│       ├── Parser/              # Tree-sitter integration + symbol extraction
-│       ├── Security/            # Path validation + secret detection
-│       └── Storage/             # JSON index persistence to ~/.token-squeeze/
-├── plugin/                      # Claude Code plugin
+│   ├── TokenSqueeze/                  # Main .NET 9 console application
+│   │   ├── Program.cs                 # CLI entry point, DI wiring, command registration
+│   │   ├── TokenSqueeze.csproj        # Project file (net9.0)
+│   │   ├── Commands/                  # CLI command handlers (one class per command)
+│   │   ├── Indexing/                  # Directory walking, parsing orchestration, staleness detection
+│   │   ├── Infrastructure/            # DI glue, JSON helpers, output formatting
+│   │   ├── Models/                    # Shared data types (records)
+│   │   ├── Parser/                    # tree-sitter language configs and symbol extraction
+│   │   ├── Security/                  # Path validation, secret detection
+│   │   └── Storage/                   # Filesystem persistence (IndexStore, StoragePaths)
+│   ├── TokenSqueeze.Tests/            # xUnit test project
+│   │   ├── TokenSqueeze.Tests.csproj
+│   │   ├── Commands/                  # Command-level tests
+│   │   ├── Fixtures/                  # Sample source files for parser tests (sample.*)
+│   │   ├── Helpers/                   # Test utilities
+│   │   ├── Indexing/                  # Indexing logic tests
+│   │   ├── Models/                    # Model tests
+│   │   ├── Parser/                    # Parser/extractor tests
+│   │   ├── Security/                  # Security validation tests
+│   │   ├── Storage/                   # Storage tests
+│   │   ├── SmokeTest.cs              # End-to-end CLI smoke tests
+│   │   ├── DisposalTests.cs          # Service provider disposal tests
+│   │   ├── LanguageSpecValidationTests.cs
+│   │   ├── OutlineHierarchyTests.cs
+│   │   ├── ReindexOnQueryTests.cs
+│   │   ├── RobustnessTests.cs
+│   │   └── StalenessCheckerTests.cs
+│   └── token-squeeze.sln             # Solution file
+├── plugin/                            # Claude Code plugin
 │   ├── .claude-plugin/
-│   │   └── plugin.json          # Plugin manifest
-│   ├── bin/                     # Published platform binaries
-│   │   ├── osx-arm64/           # macOS ARM binary
-│   │   └── win-x64/             # Windows x64 binary
+│   │   └── plugin.json               # Plugin manifest
+│   ├── skills/                        # Skill definitions (one dir per command)
+│   │   ├── index/SKILL.md
+│   │   ├── list/SKILL.md
+│   │   ├── purge/SKILL.md
+│   │   ├── outline/SKILL.md
+│   │   ├── extract/SKILL.md
+│   │   └── find/SKILL.md
 │   ├── hooks/
-│   │   └── hooks.json           # SessionStart hook config
+│   │   └── hooks.json                # Auto-index on session start
 │   ├── scripts/
-│   │   ├── auto-index.sh        # Auto-index on session start (bash)
-│   │   └── auto-index.ps1       # Auto-index on session start (PowerShell)
-│   ├── settings.json            # Plugin settings (auto_reindex toggle)
-│   └── skills/                  # Slash command definitions
-│       ├── extract/SKILL.md
-│       ├── find/SKILL.md
-│       ├── index/SKILL.md
-│       ├── list/SKILL.md
-│       ├── outline/SKILL.md
-│       └── purge/SKILL.md
-├── tests/                       # Test fixture files (sample source files)
-│   ├── sample.py
-│   ├── sample.ts
-│   ├── sample.tsx
-│   ├── sample.js
-│   ├── sample.cs
-│   ├── sample.c
-│   ├── sample.cpp
-│   └── sample.h
-├── .planning/                   # GSD planning documents
-│   ├── codebase/                # Codebase analysis (this file lives here)
-│   └── research/                # Research notes
-├── CLAUDE.md                    # Project instructions for Claude
-└── .gitignore
+│   │   ├── auto-index.sh             # Hook script (Linux/Mac)
+│   │   └── auto-index.ps1            # Hook script (Windows)
+│   ├── bin/                           # Published platform binaries
+│   └── build.sh                       # Cross-platform build script
+├── installer/
+│   └── install.js                     # npx installer (copies plugin to ~/.claude/)
+├── package.json                       # npm package for `npx token-squeeze`
+├── .planning/                         # GSD planning documents
+│   └── codebase/                      # Codebase analysis docs
+├── .claude/
+│   └── rules/
+│       └── security.md                # Security rules for Claude
+├── CLAUDE.md                          # Project instructions
+└── README.md
 ```
 
 ## Directory Purposes
 
 **`src/TokenSqueeze/Commands/`:**
-- Purpose: One file per CLI command, each a Spectre.Console.Cli `Command<TSettings>` subclass
-- Contains: 7 command files, each with nested `Settings` class for argument/option binding
-- Key files: `IndexCommand.cs` (core indexing), `ExtractCommand.cs` (symbol source retrieval), `FindCommand.cs` (search with scoring)
+- Purpose: One command handler per CLI verb
+- Contains: `IndexCommand.cs`, `ListCommand.cs`, `PurgeCommand.cs`, `OutlineCommand.cs`, `ExtractCommand.cs`, `FindCommand.cs`, `ParseTestCommand.cs`
+- Key pattern: Each class extends `Command<T.Settings>` with a nested `Settings` class for argument parsing
 
 **`src/TokenSqueeze/Indexing/`:**
-- Purpose: Orchestration layer between CLI commands and Parser/Storage
-- Contains: `ProjectIndexer.cs` (incremental indexing logic), `DirectoryWalker.cs` (filtered file enumeration)
-- Key files: `ProjectIndexer.cs` is the main indexing pipeline
-
-**`src/TokenSqueeze/Parser/`:**
-- Purpose: Tree-sitter AST parsing and symbol extraction, language configurations
-- Contains: `SymbolExtractor.cs` (AST walker, ~470 lines -- largest file), `LanguageRegistry.cs` (all language specs + parser pooling), `LanguageSpec.cs` (config record)
-- Key files: `LanguageRegistry.cs` is where new language support is added
-
-**`src/TokenSqueeze/Models/`:**
-- Purpose: Pure data types shared across all layers
-- Contains: `Symbol.cs` (core record + SymbolKind enum), `CodeIndex.cs` (project aggregate), `IndexedFile.cs` (file metadata)
-- Key files: `Symbol.cs` defines the `SymbolKind` enum and ID format
-
-**`src/TokenSqueeze/Storage/`:**
-- Purpose: Persistence to `~/.token-squeeze/projects/<name>/index.json`
-- Contains: `IndexStore.cs` (Save/Load/List/Delete), `StoragePaths.cs` (path constants)
-- Key files: `StoragePaths.cs` defines the root directory `~/.token-squeeze/projects/`
+- Purpose: Core indexing pipeline -- walking directories, detecting changes, re-parsing
+- Contains: `ProjectIndexer.cs` (full index orchestrator), `DirectoryWalker.cs` (filtered recursive walk), `StalenessChecker.cs` (mtime/hash comparison), `IncrementalReindexer.cs` (query-time partial reindex)
+- Key pattern: `DirectoryWalker` yields `WalkedFile` records lazily; `ProjectIndexer` consumes them in parallel
 
 **`src/TokenSqueeze/Infrastructure/`:**
-- Purpose: Shared output formatting
-- Contains: `JsonOutput.cs` only (static helper)
-- Key files: `JsonOutput.cs` -- all stdout output goes through this
+- Purpose: Framework plumbing not specific to domain logic
+- Contains: `TypeRegistrar.cs` + `TypeResolver.cs` (Spectre.Console DI bridge), `JsonOutput.cs` (stdout JSON writer), `JsonDefaults.cs` (shared serializer options)
+- Key pattern: `JsonOutput.Write()` is the ONLY way to write to stdout
+
+**`src/TokenSqueeze/Models/`:**
+- Purpose: Immutable domain data types shared across all layers
+- Contains: `Symbol.cs`, `CodeIndex.cs`, `Manifest.cs` (+ `ManifestFileEntry`), `IndexedFile.cs`, `FileSymbolData.cs`, `ProjectMetadata.cs`
+- Key pattern: All are `sealed record` with `required init` properties
+
+**`src/TokenSqueeze/Parser/`:**
+- Purpose: tree-sitter language configuration and AST-to-symbol extraction
+- Contains: `LanguageRegistry.cs` (language registration, parser lifecycle), `SymbolExtractor.cs` (AST walker, signature builders), `LanguageSpec.cs` (declarative language config record)
+- Key pattern: `LanguageSpec` is data-driven; add a language by registering a new spec in `LanguageRegistry`
 
 **`src/TokenSqueeze/Security/`:**
-- Purpose: Defensive checks for path traversal and secret file exposure
-- Contains: `PathValidator.cs` (symlink escape, root boundary), `SecretDetector.cs` (known secret filenames/extensions)
-- Key files: Both files are small, static utility classes
+- Purpose: Prevent path traversal, symlink escapes, and secret file indexing
+- Contains: `PathValidator.cs` (root containment check, symlink detection), `SecretDetector.cs` (filename-based secret filtering)
+
+**`src/TokenSqueeze/Storage/`:**
+- Purpose: All filesystem I/O for index persistence
+- Contains: `IndexStore.cs` (CRUD operations), `StoragePaths.cs` (path constants/helpers), `QueryReindexer.cs` (freshness check on read), `LegacyMigration.cs` (v1->v2 format upgrade)
+- Key pattern: Split storage format -- `manifest.json` + `search-index.json` + `files/<key>.json` per file
+
+**`src/TokenSqueeze.Tests/`:**
+- Purpose: xUnit test project mirroring main project structure
+- Contains: Test classes organized by feature area, plus cross-cutting test files at root
+- Key files: `Fixtures/` contains sample source files (`sample.py`, `sample.js`, etc.)
 
 **`plugin/`:**
-- Purpose: Claude Code plugin that wraps the CLI binary as slash commands
-- Contains: Plugin manifest, 6 skill definitions (SKILL.md files), session hook, platform binaries
-- Key files: `plugin/skills/*/SKILL.md` define the slash command behavior
-
-**`tests/`:**
-- Purpose: Sample source files in each supported language for manual/automated testing of the parser
-- Contains: 8 sample files (`.py`, `.ts`, `.tsx`, `.js`, `.cs`, `.c`, `.cpp`, `.h`)
-- Key files: Used as input for `parse-test` command and parser verification
+- Purpose: Claude Code integration -- makes CLI commands available as Claude skills
+- Contains: Plugin manifest, skill markdown files, auto-index hooks, build scripts
 
 ## Key File Locations
 
 **Entry Points:**
-- `src/TokenSqueeze/Program.cs`: CLI entry point, command routing, tree-sitter smoke test
+- `src/TokenSqueeze/Program.cs`: CLI entry point -- DI setup, command registration, disposal
+- `plugin/.claude-plugin/plugin.json`: Plugin manifest for Claude Code
+- `installer/install.js`: npx installer entry point
 
 **Configuration:**
-- `src/TokenSqueeze/TokenSqueeze.csproj`: .NET 9 project, dependencies (Spectre.Console.Cli, TreeSitter.DotNet, Ignore)
-- `src/token-squeeze.sln`: Solution file (single project)
-- `plugin/settings.json`: Plugin runtime settings
-- `plugin/.claude-plugin/plugin.json`: Plugin manifest
+- `src/TokenSqueeze/TokenSqueeze.csproj`: .NET project config (net9.0, dependencies)
+- `src/TokenSqueeze.Tests/TokenSqueeze.Tests.csproj`: Test project config
+- `src/token-squeeze.sln`: Solution file
+- `package.json`: npm package config for npx distribution
 
 **Core Logic:**
-- `src/TokenSqueeze/Parser/SymbolExtractor.cs`: AST walking + symbol building (~470 lines)
-- `src/TokenSqueeze/Parser/LanguageRegistry.cs`: All language definitions (~315 lines)
-- `src/TokenSqueeze/Indexing/ProjectIndexer.cs`: Incremental indexing pipeline
-- `src/TokenSqueeze/Indexing/DirectoryWalker.cs`: Multi-stage file filtering
+- `src/TokenSqueeze/Indexing/ProjectIndexer.cs`: Full index orchestration (parallel walk + parse + save)
+- `src/TokenSqueeze/Parser/SymbolExtractor.cs`: AST walking and symbol extraction (~470 lines, largest file)
+- `src/TokenSqueeze/Parser/LanguageRegistry.cs`: Language definitions and tree-sitter parser lifecycle
+- `src/TokenSqueeze/Storage/IndexStore.cs`: All persistence operations (~360 lines)
+
+**Security:**
+- `src/TokenSqueeze/Security/PathValidator.cs`: `ValidateWithinRoot()`, `IsSymlinkEscape()`
+- `src/TokenSqueeze/Security/SecretDetector.cs`: `IsSecretFile()` filename-based filter
 
 **Testing:**
-- `tests/sample.*`: Parser test fixtures (one per supported language)
+- `src/TokenSqueeze.Tests/SmokeTest.cs`: End-to-end CLI tests
+- `src/TokenSqueeze.Tests/Fixtures/`: Sample source files for all supported languages
 
 ## Naming Conventions
 
 **Files:**
-- PascalCase for all C# source files: `SymbolExtractor.cs`, `IndexCommand.cs`
-- One class per file, file name matches class name
-- Commands suffixed with `Command`: `IndexCommand.cs`, `FindCommand.cs`
+- PascalCase for C# files matching class name: `IndexCommand.cs`, `SymbolExtractor.cs`
+- Nested `Settings` class lives inside its command file (not a separate file)
+- Test files: `{ClassName}Tests.cs` or `{Feature}Tests.cs`
 
 **Directories:**
-- PascalCase for C# source directories: `Commands/`, `Parser/`, `Models/`
-- lowercase for non-C# directories: `plugin/`, `tests/`, `scripts/`
+- PascalCase matching namespace segment: `Commands/`, `Storage/`, `Parser/`
+- Test directories mirror source: `Tests/Commands/`, `Tests/Storage/`, etc.
+- Plugin directories are lowercase: `skills/`, `hooks/`, `scripts/`
 
 **Namespaces:**
-- Follow directory structure: `TokenSqueeze.Commands`, `TokenSqueeze.Parser`, `TokenSqueeze.Models`
-- File-scoped namespace declarations throughout: `namespace TokenSqueeze.Commands;`
-
-**Skills:**
-- Directory name matches command name: `skills/index/`, `skills/find/`
-- Each contains a single `SKILL.md`
+- `TokenSqueeze.{Directory}` -- e.g., `TokenSqueeze.Commands`, `TokenSqueeze.Storage`
+- File-scoped namespace declarations: `namespace TokenSqueeze.Commands;`
 
 ## Where to Add New Code
 
 **New CLI Command:**
-1. Create `src/TokenSqueeze/Commands/FooCommand.cs` implementing `Command<FooCommand.Settings>`
-2. Register in `src/TokenSqueeze/Program.cs` via `config.AddCommand<FooCommand>("foo")`
-3. Create corresponding `plugin/skills/foo/SKILL.md` for Claude Code integration
+1. Create `src/TokenSqueeze/Commands/FooCommand.cs`
+   - Extend `Command<FooCommand.Settings>` with constructor-injected services
+   - Nested `sealed class Settings : CommandSettings` for arguments
+   - Use `JsonOutput.Write()` / `JsonOutput.WriteError()` for all output
+2. Register in `src/TokenSqueeze/Program.cs`: `config.AddCommand<FooCommand>("foo")`
+3. Create `plugin/skills/foo/SKILL.md` for Claude Code integration
+4. Add tests in `src/TokenSqueeze.Tests/Commands/FooCommandTests.cs`
 
 **New Language Support:**
-1. Add a `RegisterLanguageName()` method in `src/TokenSqueeze/Parser/LanguageRegistry.cs`
-2. Call it from the `LanguageRegistry` constructor
-3. Add test fixture file in `tests/sample.ext`
-4. No changes needed elsewhere -- `DirectoryWalker` and `SymbolExtractor` are language-agnostic
+1. Add `RegisterLanguageName()` method in `src/TokenSqueeze/Parser/LanguageRegistry.cs`, call from constructor
+2. Create `LanguageSpec` record with node type mappings, field names, optional extractors
+3. Add test fixture `src/TokenSqueeze.Tests/Fixtures/sample.ext`
+4. Add parser test in `src/TokenSqueeze.Tests/Parser/`
+5. Check all switch/if branches in `src/TokenSqueeze/Parser/SymbolExtractor.cs` for language-specific logic
 
-**New Model/Data Type:**
-- Add to `src/TokenSqueeze/Models/` as a sealed record
+**New Model:**
+- Add to `src/TokenSqueeze/Models/` as `sealed record` with `required init` properties
+
+**New Storage Operation:**
+- Add method to `src/TokenSqueeze/Storage/IndexStore.cs`
+- MUST call `PathValidator.ValidateWithinRoot()` on any path derived from user input
+- Use `AtomicWrite()` for any file writes
 
 **New Security Check:**
-- Add to `src/TokenSqueeze/Security/` as a static utility class
-- Wire into `DirectoryWalker.Walk()` filter pipeline
+- Add to `src/TokenSqueeze/Security/` as `internal static class`
+- Wire into `DirectoryWalker` (for indexing) or `IndexStore` (for persistence)
 
-**New Infrastructure/Helper:**
-- Add to `src/TokenSqueeze/Infrastructure/`
-
-**New Test Fixture:**
-- Add sample file to `tests/` directory
+**Utilities:**
+- Shared JSON helpers: `src/TokenSqueeze/Infrastructure/`
+- Path/storage helpers: `src/TokenSqueeze/Storage/StoragePaths.cs`
 
 ## Special Directories
 
-**`plugin/bin/`:**
-- Purpose: Platform-specific published binaries (self-contained .NET executables)
-- Generated: Yes, via `dotnet publish` / `plugin/build.sh`
-- Committed: Yes (binaries are tracked for plugin distribution)
+**`~/.token-squeeze/projects/` (runtime storage):**
+- Purpose: Persisted index data per project
+- Structure: `<projectName>/manifest.json`, `<projectName>/search-index.json`, `<projectName>/files/*.json`
+- Generated: Yes (at runtime by `IndexStore`)
+- Committed: No (user home directory)
+- Test override: `StoragePaths.TestRootOverride` redirects to temp directory
 
-**`~/.token-squeeze/projects/`:**
-- Purpose: Runtime data directory for persisted indexes
-- Generated: Yes, created on first `index` command run
-- Committed: No (lives in user home directory, not in repo)
+**`plugin/bin/`:**
+- Purpose: Published self-contained binaries (win-x64, osx-arm64)
+- Generated: Yes (by `plugin/build.sh` / `dotnet publish`)
+- Committed: Yes (distributed with plugin)
 
 **`.planning/`:**
 - Purpose: GSD planning and analysis documents
-- Generated: By GSD workflow tools
-- Committed: Varies (some phases tracked, codebase docs generated per-session)
+- Generated: Yes (by GSD tooling)
+- Committed: Yes
 
 ---
 

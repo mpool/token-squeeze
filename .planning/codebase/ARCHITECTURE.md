@@ -4,180 +4,185 @@
 
 ## Pattern Overview
 
-**Overall:** CLI tool with layered architecture -- Commands delegate to services (Indexing, Parser, Storage) with shared Infrastructure and Security cross-cutting concerns.
+**Overall:** CLI application using Command pattern with DI, layered into Commands -> Indexing/Storage/Parser -> Models
 
 **Key Characteristics:**
-- Single .NET 9 console application with no dependency injection (manual wiring in commands)
-- All output is JSON to stdout (consumed by Claude Code plugin); diagnostics go to stderr
-- Persistent index stored as JSON files under `~/.token-squeeze/projects/`
-- Incremental indexing via SHA-256 file hash comparison
-- Tree-sitter native interop for AST parsing across 6+ languages
+- Spectre.Console.Cli command dispatch with constructor-injected services
+- tree-sitter native bindings for multi-language AST parsing
+- Per-file split storage on local filesystem (`~/.token-squeeze/projects/`)
+- All stdout is structured JSON; diagnostics go to stderr
+- Incremental indexing via SHA-256 content hashing and mtime comparison
+- Parallel file parsing during full index; single-threaded for query-time reindex
 
 ```
-┌─────────────────────────────────────────────┐
-│  Claude Code Plugin (skills/hooks)          │
-│  Invokes CLI binary via Bash                │
-├─────────────────────────────────────────────┤
-│  Program.cs  (Spectre.Console.Cli router)   │
-├─────────────────────────────────────────────┤
-│  Commands/   (7 command handlers)           │
-├──────────┬──────────┬───────────────────────┤
-│ Indexing/ │ Parser/  │ Storage/              │
-│ (walker,  │ (tree-   │ (JSON index           │
-│  indexer) │  sitter) │  persistence)         │
-├──────────┴──────────┴───────────────────────┤
-│ Infrastructure/  │  Security/               │
-│ (JSON output)    │  (path validation,       │
-│                  │   secret detection)       │
-├──────────────────┴──────────────────────────┤
-│ Models/  (Symbol, CodeIndex, IndexedFile)   │
-└─────────────────────────────────────────────┘
+                  CLI Entry (Program.cs)
+                         |
+              Spectre.Console.Cli routing
+                         |
+         +-------+-------+-------+-------+-------+-------+
+         |       |       |       |       |       |       |
+       index   list    purge  outline extract  find   parse-test
+         |       |       |       |       |       |
+         v       v       v       v       v       v
+    +-----------+  +-----------+  +------------------+
+    | Indexing   |  | Storage   |  | Parser           |
+    +-----------+  +-----------+  +------------------+
+    | ProjectIdx |  | IndexStore|  | LanguageRegistry |
+    | DirWalker  |  | StorePaths|  | SymbolExtractor  |
+    | StalenessChk| | QueryReidx|  | LanguageSpec     |
+    | IncrReindxr| | LegacyMigr|  +------------------+
+    +-----------+  +-----------+
+         |              |
+         v              v
+    +-----------+  +------------------+
+    | Security   |  | Models           |
+    +-----------+  +------------------+
+    | PathValid  |  | Symbol, CodeIndex|
+    | SecretDet  |  | Manifest, etc.   |
+    +-----------+  +------------------+
 ```
 
 ## Layers
 
-**Commands Layer:**
-- Purpose: CLI entry points. Each command validates input, wires up dependencies, calls services, formats JSON output.
+**Commands (Presentation):**
+- Purpose: Parse CLI arguments, orchestrate service calls, format JSON output
 - Location: `src/TokenSqueeze/Commands/`
-- Contains: 7 command classes, each with a nested `Settings` class for argument binding
-- Depends on: Indexing, Parser, Storage, Infrastructure, Models
+- Contains: 7 command classes, each with nested `Settings` class
+- Depends on: Indexing, Storage, Parser, Infrastructure, Models, Security
 - Used by: `Program.cs` via Spectre.Console.Cli routing
 
-**Indexing Layer:**
-- Purpose: Orchestrates directory walking and file-by-file symbol extraction. Handles incremental indexing.
+**Indexing (Core Business Logic):**
+- Purpose: Walk directories, parse files, build/update indexes
 - Location: `src/TokenSqueeze/Indexing/`
-- Contains: `ProjectIndexer` (orchestrator), `DirectoryWalker` (file enumeration with filtering)
-- Depends on: Parser, Storage, Security, Models
-- Used by: `IndexCommand`
+- Contains: `ProjectIndexer`, `DirectoryWalker`, `StalenessChecker`, `IncrementalReindexer`
+- Depends on: Storage, Parser, Models, Security
+- Used by: Commands (`IndexCommand`), Storage (`QueryReindexer`, `LegacyMigration`)
 
-**Parser Layer:**
-- Purpose: Tree-sitter AST parsing and symbol extraction. Language-agnostic via `LanguageSpec` configuration.
-- Location: `src/TokenSqueeze/Parser/`
-- Contains: `SymbolExtractor` (AST walker), `LanguageRegistry` (language config + parser pooling), `LanguageSpec` (per-language grammar rules)
-- Depends on: Models, TreeSitter.DotNet (native interop)
-- Used by: Indexing, `ParseTestCommand`
-
-**Storage Layer:**
-- Purpose: JSON serialization/deserialization of `CodeIndex` to disk at `~/.token-squeeze/projects/<name>/index.json`
+**Storage (Persistence):**
+- Purpose: Read/write index data to `~/.token-squeeze/projects/<name>/`
 - Location: `src/TokenSqueeze/Storage/`
-- Contains: `IndexStore` (CRUD operations), `StoragePaths` (path resolution)
-- Depends on: Models
+- Contains: `IndexStore`, `StoragePaths`, `QueryReindexer`, `LegacyMigration`
+- Depends on: Models, Security, Infrastructure (JsonDefaults)
 - Used by: Commands, Indexing
 
-**Models Layer:**
-- Purpose: Shared data types. No behavior, pure records/enums.
+**Parser (AST Extraction):**
+- Purpose: Configure tree-sitter languages and extract symbols from source files
+- Location: `src/TokenSqueeze/Parser/`
+- Contains: `LanguageRegistry`, `SymbolExtractor`, `LanguageSpec`
+- Depends on: Models, TreeSitter.DotNet native library
+- Used by: Commands, Indexing, Storage (via reindexing)
+
+**Models (Domain):**
+- Purpose: Data types shared across all layers
 - Location: `src/TokenSqueeze/Models/`
-- Contains: `Symbol` (record with ID, location, byte offsets), `CodeIndex` (project-level aggregate), `IndexedFile` (per-file metadata), `SymbolKind` (enum)
+- Contains: `Symbol`, `CodeIndex`, `Manifest`, `ManifestFileEntry`, `IndexedFile`, `FileSymbolData`, `ProjectMetadata`
 - Depends on: Nothing
 - Used by: All other layers
 
-**Infrastructure Layer:**
-- Purpose: Cross-cutting output formatting
-- Location: `src/TokenSqueeze/Infrastructure/`
-- Contains: `JsonOutput` (static helper for JSON stdout + error formatting)
-- Depends on: Nothing
-- Used by: All Commands
-
-**Security Layer:**
-- Purpose: Path traversal prevention and secret file detection
+**Security (Cross-Cutting):**
+- Purpose: Path traversal prevention, symlink escape detection, secret file filtering
 - Location: `src/TokenSqueeze/Security/`
-- Contains: `PathValidator` (symlink escape detection, root boundary enforcement), `SecretDetector` (blocks indexing of .env, .pem, credentials files)
+- Contains: `PathValidator`, `SecretDetector`
 - Depends on: Nothing
-- Used by: Indexing (DirectoryWalker)
+- Used by: Storage (`IndexStore`), Indexing (`DirectoryWalker`)
+
+**Infrastructure (Framework Glue):**
+- Purpose: DI wiring, JSON serialization defaults, standardized output
+- Location: `src/TokenSqueeze/Infrastructure/`
+- Contains: `TypeRegistrar`, `TypeResolver`, `JsonOutput`, `JsonDefaults`
+- Depends on: Spectre.Console.Cli, Microsoft.Extensions.DependencyInjection
+- Used by: `Program.cs`, all Commands
 
 ## Data Flow
 
-**Index Flow (core pipeline):**
+**Index Command (Full Index):**
 
-1. `IndexCommand` receives `<path>` argument, resolves to absolute path
-2. `IndexCommand` creates `LanguageRegistry`, `IndexStore`, `ProjectIndexer`
-3. `ProjectIndexer.Index()` loads existing index (if any) for incremental comparison
-4. `DirectoryWalker.Walk()` enumerates files, filtering by: skipped dirs, .gitignore, secret files, supported extensions, binary detection, symlink escapes
-5. For each file, `ProjectIndexer` computes SHA-256 hash. If unchanged from existing index, reuses cached symbols.
-6. Changed files go through `SymbolExtractor.ExtractSymbols()` which tree-sitter parses and walks the AST
-7. `SymbolExtractor` maps AST node types to `SymbolKind` via `LanguageSpec` configuration, builds `Symbol` records with byte offsets
-8. `ProjectIndexer` assembles `CodeIndex` and calls `IndexStore.Save()` (atomic write via temp file + move)
-9. `IndexCommand` outputs JSON summary to stdout
+1. `IndexCommand.Execute()` resolves full path, creates `ProjectIndexer`
+2. `ProjectIndexer.Index()` loads existing index for incremental comparison
+3. `DirectoryWalker.Walk()` yields `WalkedFile(path, bytes)` lazily, applying filters: gitignore stack, secret detection, extension check, size limit, symlink escape, binary content check
+4. `Parallel.ForEach` processes walked files: per-thread `LanguageRegistry` + `SymbolExtractor` instances, SHA-256 hash comparison skips unchanged files
+5. `IndexStore.Save()` writes split storage: per-file fragment JSON files in `files/`, `search-index.json` (lightweight symbol list), `manifest.json` (written last for crash safety)
+6. `JsonOutput.Write()` emits summary JSON to stdout
 
-**Extract Flow (symbol retrieval):**
+**Query Commands (find/outline/extract):**
 
-1. `ExtractCommand` loads `CodeIndex` from `IndexStore`
-2. Looks up `Symbol` by ID (format: `file::qualifiedName#Kind`)
-3. Reads source file bytes, validates SHA-256 hash against stored hash (staleness detection)
-4. Extracts source text via `Symbol.ByteOffset` + `Symbol.ByteLength` from raw bytes
-5. Returns JSON with source code, metadata, and optional `stale: true` warning
-
-**Find Flow (symbol search):**
-
-1. `FindCommand` loads `CodeIndex` from `IndexStore`
-2. Iterates all symbols, scoring each against query string (exact match: 200, contains: 100, qualified name: 75, signature: 50, docstring: 25)
-3. Optionally filters by `--kind` enum and `--path` glob pattern (converted to regex)
-4. Returns top N results ordered by score
+1. Command calls `LegacyMigration.TryMigrateIfNeeded()` for old format indexes
+2. Command calls `QueryReindexer.EnsureFresh()` which:
+   a. Loads `manifest.json`
+   b. `StalenessChecker.DetectStaleFiles()` compares mtime then SHA-256 hash, also detects deleted/new files
+   c. If stale files found, `IncrementalReindexer.ReindexFiles()` re-parses up to 50 files and rebuilds `search-index.json`
+3. Command loads symbols from `search-index.json` (find) or per-file fragments (outline/extract)
+4. `ExtractCommand` reads original source bytes from disk, extracts by `ByteOffset`/`ByteLength`
 
 **State Management:**
-- No in-memory state between invocations. Each CLI run is stateless.
-- All persistent state lives in `~/.token-squeeze/projects/<projectName>/index.json`
-- `IndexStore` handles atomic writes (write to .tmp, then move)
+- No in-memory state between CLI invocations (process-per-command model)
+- All state persisted to `~/.token-squeeze/projects/<projectName>/`
+- `IndexStore` and `LanguageRegistry` are DI singletons within a single invocation
+- `LanguageRegistry` owns native tree-sitter handles; disposed after `app.Run()` returns
 
 ## Key Abstractions
 
 **LanguageSpec:**
-- Purpose: Declarative per-language configuration for tree-sitter symbol extraction
-- Examples: Defined inline in `src/TokenSqueeze/Parser/LanguageRegistry.cs` (RegisterPython, RegisterTypeScript, etc.)
-- Pattern: Data-driven. Maps AST node types to `SymbolKind`, specifies field names for name/params/return-type extraction, docstring strategy, and constant/type patterns. Adding a new language = adding a new `Register*()` method.
+- Purpose: Declarative configuration for a programming language's AST structure
+- Examples: Registered in `src/TokenSqueeze/Parser/LanguageRegistry.cs` (one per language)
+- Pattern: Data-driven extraction -- maps tree-sitter node types to symbol kinds, field names to name/param/return-type accessors, plus optional `ConstantExtractor` and `SignatureBuilder` delegates
 
 **Symbol:**
-- Purpose: Core data unit. Represents one extractable code entity (function, class, method, constant, type).
-- Examples: `src/TokenSqueeze/Models/Symbol.cs`
-- Pattern: Immutable record with `required` properties. ID format: `filePath::qualifiedName#Kind`. Includes byte offsets for precise source extraction without re-parsing.
+- Purpose: A single extracted code symbol (function, class, method, constant, type)
+- Definition: `src/TokenSqueeze/Models/Symbol.cs`
+- Pattern: Immutable record with deterministic `Id` format: `{filePath}::{qualifiedName}#{kind}`
 
-**CodeIndex:**
-- Purpose: Project-level aggregate containing all files and symbols for a codebase
-- Examples: `src/TokenSqueeze/Models/CodeIndex.cs`
-- Pattern: Immutable record. Dictionary of files keyed by relative path, flat list of symbols. Serialized as single JSON file.
+**Manifest / ManifestFileEntry:**
+- Purpose: Lightweight index metadata mapping file paths to storage keys and hashes
+- Definition: `src/TokenSqueeze/Models/Manifest.cs`
+- Pattern: Written last during save for crash safety; loaded first during queries
 
-**DirectoryWalker:**
-- Purpose: Multi-layered file filter pipeline
-- Examples: `src/TokenSqueeze/Indexing/DirectoryWalker.cs`
-- Pattern: Iterator (yield return). Applies 6 filter stages: skipped dirs, .gitignore, secrets, extensions, binary check, symlink escape. Uses `Ignore` NuGet package for .gitignore parsing.
+**IndexStore:**
+- Purpose: Single gateway for all filesystem persistence operations
+- Definition: `src/TokenSqueeze/Storage/IndexStore.cs`
+- Pattern: Validates paths via `PathValidator.ValidateWithinRoot()` on every public method; uses `AtomicWrite` (temp file + rename) for crash safety
 
 ## Entry Points
 
-**CLI Entry (Program.cs):**
+**CLI (`Program.cs`):**
 - Location: `src/TokenSqueeze/Program.cs`
-- Triggers: Direct invocation as `token-squeeze <command> [args]` or via Claude Code plugin skills
-- Responsibilities: Tree-sitter native library smoke test on startup, Spectre.Console.Cli command routing to 7 commands
+- Triggers: Direct CLI invocation or Claude Code plugin skill execution
+- Responsibilities: Wire DI container (`LanguageRegistry`, `IndexStore`), register commands with Spectre.Console.Cli, run command, dispose service provider
 
-**Plugin Entry (skills/):**
-- Location: `plugin/skills/*/SKILL.md`
-- Triggers: Claude Code slash commands (e.g., `/token-squeeze:index`, `/token-squeeze:find`)
-- Responsibilities: Each SKILL.md instructs Claude to detect platform, invoke the appropriate binary, and format output for the user
+**Claude Code Plugin:**
+- Location: `plugin/.claude-plugin/plugin.json` + `plugin/skills/*/SKILL.md`
+- Triggers: Claude Code skill invocations (e.g., "index this project", "find symbol")
+- Responsibilities: Map natural language intents to CLI commands
 
-**Plugin Hook (SessionStart):**
-- Location: `plugin/hooks/hooks.json`
-- Triggers: Claude Code session startup
-- Responsibilities: Runs `plugin/scripts/auto-index.sh` to check/refresh index for current project
+**Auto-Index Hook:**
+- Location: `plugin/hooks/hooks.json` + `plugin/scripts/auto-index.{sh,ps1}`
+- Triggers: Claude Code session start
+- Responsibilities: Automatically index the current project directory
 
 ## Error Handling
 
-**Strategy:** Try-catch at command level, JSON error output to stdout (not stderr)
+**Strategy:** Return JSON error objects via `JsonOutput.WriteError()` with exit code 1; never throw unhandled exceptions to stdout
 
 **Patterns:**
-- Commands wrap execution in `try/catch(Exception)` and call `JsonOutput.WriteError(ex.Message)` with return code 1
-- Security failures throw `SecurityException` (caught at command level)
-- Tree-sitter native load failure caught at startup in `Program.cs`, exits with code 1
-- `ExtractCommand` handles staleness gracefully: returns data with `stale: true` + warning rather than failing
-- `DirectoryWalker` fails safe: treats unreadable files as binary, treats symlink resolution errors as escapes
+- Commands wrap body in `try/catch(Exception)`, call `JsonOutput.WriteError(ex.Message)`, return 1
+- `DirectoryWalker` silently skips unreadable files/directories (fail-safe)
+- `ProjectIndexer.Index()` uses `Parallel.ForEach` with per-file `try/catch`; counts errors, continues processing
+- `IncrementalReindexer` catches per-file exceptions, logs to stderr, continues
+- `IndexStore.AtomicWrite` retries `File.Move` up to 5 times on `UnauthorizedAccessException` (Windows file locking), cleans up temp file on unrecoverable failure
+- `PathValidator.ValidateWithinRoot` throws `SecurityException` on traversal attempts; callers catch and return error JSON
+- `#if DEBUG` in `Program.cs` enables `PropagateExceptions()` for development
 
 ## Cross-Cutting Concerns
 
-**Logging:** Diagnostic output to stderr via `Console.Error.WriteLine()`. All structured output is JSON to stdout via `JsonOutput.Write()`. No logging framework.
+**Logging:** stderr only via `Console.Error.WriteLine()`. No logging framework. Used for progress messages, warnings, and per-file parse errors.
 
-**Validation:** Input validation in command `Execute()` methods (directory existence, project existence). `PathValidator` for security boundary checks. `LanguageSpec` field lookups are null-safe via `TryGetField()`.
+**Validation:** `PathValidator.ValidateWithinRoot()` called in nearly every `IndexStore` public method. `ProjectIndexer.SanitizeName()` strips dangerous characters from project names. `LanguageSpec.Validate()` checks cross-reference consistency at registration time.
 
-**Authentication:** Not applicable. Local CLI tool with no network calls.
+**Authentication:** Not applicable (local CLI tool, no network auth).
 
-**Serialization:** System.Text.Json throughout. `JsonNamingPolicy.CamelCase`, nulls omitted via `WhenWritingNull`. Duplicate `JsonSerializerOptions` instances in `JsonOutput` and `IndexStore` (same config).
+**Serialization:** All JSON via `System.Text.Json` with shared `JsonDefaults.Options` (camelCase, no nulls, single-line). `AtomicWrite` pattern used everywhere for crash safety.
+
+**Concurrency:** `Parallel.ForEach` in `ProjectIndexer.Index()` with per-thread `LanguageRegistry`/`SymbolExtractor` instances (tree-sitter parsers are not thread-safe). `ConcurrentBag` collects results, then deterministic sort.
 
 ---
 

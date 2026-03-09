@@ -1,14 +1,15 @@
 using System.ComponentModel;
-using System.Security.Cryptography;
 using System.Text;
 using Spectre.Console.Cli;
 using TokenSqueeze.Infrastructure;
 using TokenSqueeze.Models;
+using TokenSqueeze.Parser;
+using TokenSqueeze.Security;
 using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
+internal sealed class ExtractCommand(IndexStore store, LanguageRegistry registry) : Command<ExtractCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -27,9 +28,20 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
 
     public override int Execute(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        var store = new IndexStore();
-        var index = store.Load(settings.Name);
-        if (index is null)
+        try
+        {
+        // Legacy migration
+        if (LegacyMigration.TryMigrateIfNeeded(settings.Name, store, registry, out var migrationError))
+        {
+            if (migrationError is not null)
+            {
+                JsonOutput.WriteError(migrationError);
+                return 1;
+            }
+        }
+
+        var manifest = QueryReindexer.EnsureFresh(settings.Name, store, registry, cancellation);
+        if (manifest is null)
         {
             JsonOutput.WriteError($"Project not found: {settings.Name}");
             return 1;
@@ -53,15 +65,41 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
 
         bool isBatch = settings.Batch is { Length: > 0 };
 
-        // Cache file hashes to avoid re-reading the same file
-        var fileHashCache = new Dictionary<string, (byte[] bytes, bool stale)>();
+        // Group target IDs by file path using centralized ParseId
+        var idsByFile = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var id in targetIds)
+        {
+            var parsed = Symbol.ParseId(id);
+            var filePath = parsed?.FilePath ?? "";
+
+            if (!idsByFile.TryGetValue(filePath, out var ids))
+            {
+                ids = [];
+                idsByFile[filePath] = ids;
+            }
+            ids.Add(id);
+        }
+
+        // Load symbols per file and build lookup dictionary
+        var symbolById = new Dictionary<string, Symbol>(StringComparer.Ordinal);
+        foreach (var filePath in idsByFile.Keys)
+        {
+            var fileSymbols = store.LoadFileSymbols(settings.Name, filePath, manifest);
+            if (fileSymbols is not null)
+            {
+                foreach (var sym in fileSymbols)
+                    symbolById[sym.Id] = sym;
+            }
+        }
+
+        // Cache file bytes to avoid re-reading the same file
+        var fileBytesCache = new Dictionary<string, byte[]>();
 
         var results = new List<object>();
 
         foreach (var id in targetIds)
         {
-            var symbol = index.Symbols.FirstOrDefault(s =>
-                string.Equals(s.Id, id, StringComparison.Ordinal));
+            symbolById.TryGetValue(id, out var symbol);
 
             if (symbol is null)
             {
@@ -69,7 +107,17 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
                 continue;
             }
 
-            var sourceFilePath = Path.Combine(index.SourcePath, symbol.File);
+            var sourceFilePath = Path.Combine(manifest.SourcePath, symbol.File);
+
+            try
+            {
+                PathValidator.ValidateWithinRoot(sourceFilePath, manifest.SourcePath);
+            }
+            catch (System.Security.SecurityException)
+            {
+                results.Add(new { id, error = "Source file path escapes project root" });
+                continue;
+            }
 
             if (!File.Exists(sourceFilePath))
             {
@@ -85,27 +133,17 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
             }
 
             // Read file bytes (cached per file)
-            if (!fileHashCache.TryGetValue(symbol.File, out var cached))
+            if (!fileBytesCache.TryGetValue(symbol.File, out var cachedBytes))
             {
-                var fileBytes = File.ReadAllBytes(sourceFilePath);
-                bool isStale = false;
-
-                // Hash validation against indexed file hash
-                if (index.Files.TryGetValue(symbol.File, out var indexedFile))
-                {
-                    var currentHash = Convert.ToHexString(SHA256.HashData(fileBytes)).ToLowerInvariant();
-                    isStale = !string.Equals(currentHash, indexedFile.Hash, StringComparison.OrdinalIgnoreCase);
-                }
-
-                cached = (fileBytes, isStale);
-                fileHashCache[symbol.File] = cached;
+                cachedBytes = File.ReadAllBytes(sourceFilePath);
+                fileBytesCache[symbol.File] = cachedBytes;
             }
 
             // Byte-offset extraction
             string source;
             try
             {
-                if (symbol.ByteOffset + symbol.ByteLength > cached.bytes.Length)
+                if (symbol.ByteOffset + symbol.ByteLength > cachedBytes.Length)
                 {
                     results.Add(new
                     {
@@ -118,7 +156,7 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
                     continue;
                 }
 
-                source = Encoding.UTF8.GetString(cached.bytes, symbol.ByteOffset, symbol.ByteLength);
+                source = Encoding.UTF8.GetString(cachedBytes, symbol.ByteOffset, symbol.ByteLength);
             }
             catch (Exception ex)
             {
@@ -133,36 +171,17 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
                 continue;
             }
 
-            if (cached.stale)
+            results.Add(new
             {
-                results.Add(new
-                {
-                    id,
-                    name = symbol.Name,
-                    kind = symbol.Kind.ToString(),
-                    signature = symbol.Signature,
-                    source,
-                    file = symbol.File,
-                    line = symbol.Line,
-                    endLine = symbol.EndLine,
-                    stale = true,
-                    warning = "File has changed since last index"
-                });
-            }
-            else
-            {
-                results.Add(new
-                {
-                    id,
-                    name = symbol.Name,
-                    kind = symbol.Kind.ToString(),
-                    signature = symbol.Signature,
-                    source,
-                    file = symbol.File,
-                    line = symbol.Line,
-                    endLine = symbol.EndLine
-                });
-            }
+                id,
+                name = symbol.Name,
+                kind = symbol.Kind.ToString(),
+                signature = symbol.Signature,
+                source,
+                file = symbol.File,
+                line = symbol.Line,
+                endLine = symbol.EndLine
+            });
         }
 
         if (isBatch)
@@ -175,5 +194,11 @@ internal sealed class ExtractCommand : Command<ExtractCommand.Settings>
         }
 
         return 0;
+        }
+        catch (Exception ex)
+        {
+            JsonOutput.WriteError(ex.Message);
+            return 1;
+        }
     }
 }

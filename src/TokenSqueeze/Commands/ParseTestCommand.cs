@@ -6,7 +6,7 @@ using TokenSqueeze.Parser;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class ParseTestCommand : Command<ParseTestCommand.Settings>
+internal sealed class ParseTestCommand(LanguageRegistry registry) : Command<ParseTestCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -25,7 +25,6 @@ internal sealed class ParseTestCommand : Command<ParseTestCommand.Settings>
         }
 
         var ext = Path.GetExtension(filePath);
-        using var registry = new LanguageRegistry();
         var spec = registry.GetSpecForExtension(ext);
 
         if (spec == null)

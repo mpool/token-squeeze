@@ -15,8 +15,8 @@ public sealed class LanguageRegistry : IDisposable
     {
         RegisterPython();
         RegisterJavaScript();
-        RegisterTypeScript();
-        RegisterTsx();
+        RegisterTypeScriptVariant("TypeScript", "TypeScript", [".ts"]);
+        RegisterTypeScriptVariant("Tsx", "TypeScript (TSX)", [".tsx"]);
         RegisterCSharp();
         RegisterC();
         RegisterCpp();
@@ -47,6 +47,7 @@ public sealed class LanguageRegistry : IDisposable
 
     private void Register(LanguageSpec spec)
     {
+        LanguageSpec.Validate(spec);
         _allSpecs.Add(spec);
         foreach (var ext in spec.Extensions)
             _specsByExtension[ext] = spec;
@@ -81,6 +82,8 @@ public sealed class LanguageRegistry : IDisposable
             ConstantPatterns = ["assignment"],
             TypePatterns = ["type_alias_statement"],
             Extensions = [".py"],
+            ConstantExtractor = SymbolExtractor.ExtractPythonConstant,
+            SignatureBuilder = SymbolExtractor.BuildPythonSignature,
         });
     }
 
@@ -113,15 +116,17 @@ public sealed class LanguageRegistry : IDisposable
             ConstantPatterns = ["lexical_declaration"],
             TypePatterns = [],
             Extensions = [".js", ".jsx"],
+            ConstantExtractor = SymbolExtractor.ExtractJsConstant,
+            SignatureBuilder = SymbolExtractor.BuildJavaScriptSignature,
         });
     }
 
-    private void RegisterTypeScript()
+    private void RegisterTypeScriptVariant(string languageId, string displayName, string[] extensions)
     {
         Register(new LanguageSpec
         {
-            LanguageId = "TypeScript",
-            DisplayName = "TypeScript",
+            LanguageId = languageId,
+            DisplayName = displayName,
             SymbolNodeTypes = new Dictionary<string, SymbolKind>
             {
                 ["function_declaration"] = SymbolKind.Function,
@@ -151,46 +156,9 @@ public sealed class LanguageRegistry : IDisposable
             ContainerNodeTypes = ["class_declaration"],
             ConstantPatterns = ["lexical_declaration"],
             TypePatterns = ["interface_declaration", "type_alias_declaration", "enum_declaration"],
-            Extensions = [".ts"],
-        });
-    }
-
-    private void RegisterTsx()
-    {
-        Register(new LanguageSpec
-        {
-            LanguageId = "Tsx",
-            DisplayName = "TypeScript (TSX)",
-            SymbolNodeTypes = new Dictionary<string, SymbolKind>
-            {
-                ["function_declaration"] = SymbolKind.Function,
-                ["class_declaration"] = SymbolKind.Class,
-                ["method_definition"] = SymbolKind.Method,
-            },
-            NameFields = new Dictionary<string, string>
-            {
-                ["function_declaration"] = "name",
-                ["class_declaration"] = "name",
-                ["method_definition"] = "name",
-                ["interface_declaration"] = "name",
-                ["type_alias_declaration"] = "name",
-                ["enum_declaration"] = "name",
-            },
-            ParamFields = new Dictionary<string, string>
-            {
-                ["function_declaration"] = "parameters",
-                ["method_definition"] = "parameters",
-            },
-            ReturnTypeFields = new Dictionary<string, string>
-            {
-                ["function_declaration"] = "return_type",
-                ["method_definition"] = "return_type",
-            },
-            DocstringStrategy = DocstringStrategy.PrecedingComment,
-            ContainerNodeTypes = ["class_declaration"],
-            ConstantPatterns = ["lexical_declaration"],
-            TypePatterns = ["interface_declaration", "type_alias_declaration", "enum_declaration"],
-            Extensions = [".tsx"],
+            Extensions = extensions,
+            ConstantExtractor = SymbolExtractor.ExtractJsConstant,
+            SignatureBuilder = SymbolExtractor.BuildTypeScriptSignature,
         });
     }
 
@@ -204,7 +172,11 @@ public sealed class LanguageRegistry : IDisposable
             {
                 ["class_declaration"] = SymbolKind.Class,
                 ["record_declaration"] = SymbolKind.Class,
+                ["struct_declaration"] = SymbolKind.Class,
+                ["interface_declaration"] = SymbolKind.Class,
                 ["method_declaration"] = SymbolKind.Method,
+                ["enum_declaration"] = SymbolKind.Type,
+                ["delegate_declaration"] = SymbolKind.Type,
                 ["constructor_declaration"] = SymbolKind.Method,
             },
             NameFields = new Dictionary<string, string>
@@ -222,7 +194,6 @@ public sealed class LanguageRegistry : IDisposable
             {
                 ["method_declaration"] = "parameters",
                 ["constructor_declaration"] = "parameters",
-                ["delegate_declaration"] = "parameters",
             },
             ReturnTypeFields = new Dictionary<string, string>
             {
@@ -231,8 +202,9 @@ public sealed class LanguageRegistry : IDisposable
             DocstringStrategy = DocstringStrategy.PrecedingComment,
             ContainerNodeTypes = ["class_declaration", "struct_declaration", "record_declaration", "interface_declaration"],
             ConstantPatterns = [],
-            TypePatterns = ["interface_declaration", "enum_declaration", "struct_declaration", "delegate_declaration"],
+            TypePatterns = ["enum_declaration", "delegate_declaration"],
             Extensions = [".cs"],
+            SignatureBuilder = SymbolExtractor.BuildCSharpSignature,
         });
     }
 
@@ -263,6 +235,8 @@ public sealed class LanguageRegistry : IDisposable
             TypePatterns = ["struct_specifier", "enum_specifier", "union_specifier", "type_definition"],
             Extensions = [".c", ".h"],
             RequiresDeclaratorDrilling = true,
+            ConstantExtractor = SymbolExtractor.ExtractCConstant,
+            SignatureBuilder = SymbolExtractor.BuildCCppSignature,
         });
     }
 
@@ -276,6 +250,8 @@ public sealed class LanguageRegistry : IDisposable
             {
                 ["function_definition"] = SymbolKind.Function,
                 ["class_specifier"] = SymbolKind.Class,
+                ["struct_specifier"] = SymbolKind.Class,
+                ["union_specifier"] = SymbolKind.Class,
             },
             NameFields = new Dictionary<string, string>
             {
@@ -293,9 +269,11 @@ public sealed class LanguageRegistry : IDisposable
             DocstringStrategy = DocstringStrategy.PrecedingComment,
             ContainerNodeTypes = ["class_specifier", "struct_specifier", "union_specifier"],
             ConstantPatterns = ["preproc_def"],
-            TypePatterns = ["struct_specifier", "enum_specifier", "union_specifier", "type_definition", "alias_declaration"],
+            TypePatterns = ["enum_specifier", "type_definition", "alias_declaration"],
             Extensions = [".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"],
             RequiresDeclaratorDrilling = true,
+            ConstantExtractor = SymbolExtractor.ExtractCConstant,
+            SignatureBuilder = SymbolExtractor.BuildCCppSignature,
         });
     }
 

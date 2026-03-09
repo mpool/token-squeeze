@@ -9,21 +9,36 @@ C# .NET 9 CLI + Claude Code plugin for tree-sitter-based codebase indexing and s
 ```
 token-squeeze/
 ├── src/
-│   └── TokenSqueeze/          # .NET 9 console app (single project)
-│       ├── TokenSqueeze.csproj
-│       ├── Program.cs          # CLI entry point (Spectre.Console.Cli)
-│       ├── Commands/           # CLI command handlers
-│       ├── Infrastructure/     # Shared helpers
-│       │   └── JsonOutput.cs
-│       ├── Parser/             # tree-sitter AST extraction
-│       │   ├── LanguageSpec.cs
-│       │   ├── LanguageRegistry.cs
-│       │   └── SymbolExtractor.cs
-│       ├── Models/             # Symbol, CodeIndex, etc.
-│       ├── Storage/            # IndexStore (JSON + raw files)
-│       └── Security/           # Path traversal, symlink, secrets
-├── .planning/                  # GSD planning docs
-└── CLAUDE.md                   # This file
+│   ├── TokenSqueeze/              # .NET 9 console app
+│   │   ├── TokenSqueeze.csproj
+│   │   ├── Program.cs             # CLI entry point (Spectre.Console.Cli)
+│   │   ├── Commands/              # CLI command handlers
+│   │   ├── Infrastructure/        # Shared helpers
+│   │   │   └── JsonOutput.cs
+│   │   ├── Parser/                # tree-sitter AST extraction
+│   │   │   ├── LanguageSpec.cs
+│   │   │   ├── LanguageRegistry.cs
+│   │   │   └── SymbolExtractor.cs
+│   │   ├── Models/                # Symbol, CodeIndex, etc.
+│   │   ├── Storage/               # IndexStore (JSON + raw files)
+│   │   └── Security/              # Path traversal, symlink, secrets
+│   ├── TokenSqueeze.Tests/        # xUnit test project
+│   │   ├── TokenSqueeze.Tests.csproj
+│   │   ├── SmokeTest.cs
+│   │   └── Fixtures/              # Parser test fixture files (sample.*)
+│   └── token-squeeze.sln
+├── plugin/                        # Claude Code plugin (installed via npx)
+│   ├── .claude-plugin/            # Plugin manifest
+│   ├── skills/                    # Skill definitions
+│   ├── hooks/                     # Hooks (auto-index on session start)
+│   ├── scripts/                   # Hook helper scripts
+│   ├── bin/                       # Published platform binaries
+│   └── build.sh                   # Cross-platform build script
+├── installer/                     # npx installer (copies plugin to ~/.claude/)
+│   └── install.js
+├── package.json                   # npm package for `npx token-squeeze`
+├── .planning/                     # GSD planning docs
+└── CLAUDE.md                      # This file
 ```
 
 ## Build & Run
@@ -39,7 +54,7 @@ dotnet publish src/TokenSqueeze/TokenSqueeze.csproj -c Release -r osx-arm64 --se
 
 ## Key Conventions
 
-- **All C# source goes in `src/`** — single solution, single project
+- **All C# source goes in `src/`** — single solution, two projects (app + tests)
 - **Target:** net9.0
 - **CLI framework:** Spectre.Console.Cli
 - **Parsing:** TreeSitter.DotNet
@@ -83,18 +98,16 @@ Python, JavaScript, TypeScript, C#, C, C++
 
 **New language:**
 1. Add `RegisterLanguageName()` in `LanguageRegistry.cs`, call from constructor
-2. Add test fixture `tests/sample.ext`
+2. Add test fixture `src/TokenSqueeze.Tests/Fixtures/sample.ext`
 3. Search all existing language ID strings (`"Python"`, `"JavaScript"`, etc.) to find every branch in `SymbolExtractor` that needs a case
 
 ## Known Bugs
 
-- **OutlineCommand hierarchy broken:** `childrenByParent` keys on `s.Parent` (full ID like `path::ClassName#Class`) but lookups use `root.Name` (just `ClassName`). All symbols render flat — no nesting.
-- **Method detection logic wrong:** `SymbolExtractor.cs:50` — `spec.ContainerNodeTypes.Any(ct => scopeParts.Count > 0)` ignores the `ct` parameter. Works by coincidence in typical cases.
-- **GlobToRegex anchoring:** `FindCommand` `--path` patterns require full path match (`^...$`). Users must prefix with `**/` for non-rooted searches.
+No known unfixed bugs. Previously listed bugs (deleted-file ghosts, new-file invisibility, StoragePaths duplication, SaveFileFragment/RebuildSearchIndex missing validation) have all been resolved.
 
 ## What This Project Does NOT Have
 
 - No MCP server protocol
 - No telemetry / token tracking
 - No file tree or full-text search commands (Claude has Glob/Grep)
-- No automated tests (zero unit/integration tests — `tests/` contains only parser fixture files)
+- Test project: `src/TokenSqueeze.Tests/` with xUnit; fixture files in `Fixtures/`

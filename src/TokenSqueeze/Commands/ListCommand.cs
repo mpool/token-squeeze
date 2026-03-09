@@ -1,10 +1,11 @@
 using Spectre.Console.Cli;
 using TokenSqueeze.Infrastructure;
+using TokenSqueeze.Parser;
 using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class ListCommand : Command<ListCommand.Settings>
+internal sealed class ListCommand(IndexStore store, LanguageRegistry registry) : Command<ListCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -14,30 +15,38 @@ internal sealed class ListCommand : Command<ListCommand.Settings>
     {
         try
         {
-            var store = new IndexStore();
             var projectNames = store.ListProjects();
 
             var projects = new List<object>();
             foreach (var name in projectNames)
             {
-                var index = store.Load(name);
-                if (index is null) continue;
-
-                var languages = index.Symbols
-                    .Select(s => s.Language)
-                    .Distinct()
-                    .OrderBy(l => l)
-                    .ToList();
-
-                projects.Add(new
+                // Try new manifest format first
+                var manifest = store.LoadManifest(name);
+                if (manifest is not null)
                 {
-                    name = index.ProjectName,
-                    sourcePath = index.SourcePath,
-                    fileCount = index.Files.Count,
-                    symbolCount = index.Symbols.Count,
-                    languages,
-                    indexedAt = index.IndexedAt
-                });
+                    projects.Add(ProjectToJson(manifest));
+                    continue;
+                }
+
+                // Legacy format: try migration
+                if (store.IsLegacyFormat(name))
+                {
+                    if (LegacyMigration.TryMigrateIfNeeded(name, store, registry, out var error))
+                    {
+                        if (error is not null)
+                        {
+                            Console.Error.WriteLine($"Warning: could not migrate '{name}': {error}");
+                            continue;
+                        }
+
+                        // Retry with manifest after successful migration
+                        manifest = store.LoadManifest(name);
+                        if (manifest is not null)
+                        {
+                            projects.Add(ProjectToJson(manifest));
+                        }
+                    }
+                }
             }
 
             JsonOutput.Write(new { projects });
@@ -47,6 +56,26 @@ internal sealed class ListCommand : Command<ListCommand.Settings>
         {
             JsonOutput.WriteError(ex.Message);
             return 1;
+        }
+
+        object ProjectToJson(Models.Manifest m)
+        {
+            var totalSymbols = m.Files.Values.Sum(f => f.SymbolCount);
+            var languages = m.Files.Values
+                .Select(f => f.Language)
+                .Distinct()
+                .OrderBy(l => l)
+                .ToList();
+
+            return new
+            {
+                name = m.ProjectName,
+                sourcePath = m.SourcePath,
+                fileCount = m.Files.Count,
+                symbolCount = totalSymbols,
+                languages,
+                indexedAt = m.IndexedAt
+            };
         }
     }
 }

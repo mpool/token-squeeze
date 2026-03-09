@@ -15,6 +15,10 @@ obj/
 # Claude Code local settings
 .claude/settings.local.json
 
+# Publish temp files
+.release/
+node_modules/
+
 # OS
 Thumbs.db
 Desktop.ini

@@ -2,8 +2,12 @@
 
 When modifying code that handles project names, storage paths, or file deletion:
 
-- **Project names are unsanitized.** `ProjectIndexer.ResolveProjectName` passes user input (directory name or `--name`) directly to `StoragePaths.GetProjectDir` via `Path.Combine` — no traversal protection. `PathValidator` exists but is not called on project names. Any new code touching project names must sanitize to alphanumeric + hyphens, or validate with `PathValidator.ValidateWithinRoot`.
+- **Project names are sanitized (fixed).** `ProjectIndexer.ResolveProjectName` runs `SanitizeName` (strips all non-alphanumeric except `-_. `) and `IndexStore` methods call `PathValidator.ValidateWithinRoot` as a second layer. Both mitigations are in place — maintain them when adding new entry points.
 
-- **PurgeCommand deletes recursively without path validation.** `IndexStore.Delete()` calls `Directory.Delete(projectDir, recursive: true)` where `projectDir` is derived from user input. A crafted name could target directories outside `~/.token-squeeze/projects/`. Add `PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir)` before any deletion.
+- **PurgeCommand deletion is validated (fixed).** `IndexStore.Delete()` calls `PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir)` before `Directory.Delete`. Safe as-is.
 
-- **Only root-level .gitignore is respected.** `DirectoryWalker` reads only the project root `.gitignore`. Nested `.gitignore` files (common in monorepos) are ignored, potentially indexing secret-containing files. `SecretDetector` provides a second layer but is not comprehensive.
+- **`SaveFileFragment` and `RebuildSearchIndex` now validate (fixed).** Both call `ValidateWithinRoot` internally. Maintain this when modifying these methods.
+
+- **Nested .gitignore support is implemented (fixed).** `DirectoryWalker` uses a `gitignoreStack` that picks up `.gitignore` files in every directory during recursion. `SecretDetector` provides a second layer but is filename-only — it never scans file contents.
+
+- **Symlink check ordering.** `DirectoryWalker` reads file bytes before checking `PathValidator.IsSymlinkEscape`. Bytes are discarded on failure (no persistence), but the read still occurs. Move the check before `File.ReadAllBytes` if modifying this area.

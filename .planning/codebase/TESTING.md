@@ -5,201 +5,377 @@
 ## Test Framework
 
 **Runner:**
-- None configured. No test project exists in the solution.
+- xUnit 2.9.2
+- Config: implicit (no xunit.runner.json detected; configured via `.csproj` package references)
+- Test SDK: Microsoft.NET.Test.Sdk 17.12.0
 
 **Assertion Library:**
-- Not applicable
+- xUnit built-in assertions (`Assert.*`)
+- No FluentAssertions or similar third-party assertion library
+
+**Coverage:**
+- coverlet.collector 6.0.2 (installed but no enforced thresholds)
 
 **Run Commands:**
 ```bash
-# No test commands available
-# The solution file (`src/token-squeeze.sln`) contains only the main project
+dotnet test src/TokenSqueeze.Tests/TokenSqueeze.Tests.csproj       # Run all tests
+dotnet test src/TokenSqueeze.Tests/TokenSqueeze.Tests.csproj --filter "FullyQualifiedName~SmokeTest"  # Filter
+dotnet test src/TokenSqueeze.Tests/TokenSqueeze.Tests.csproj --collect:"XPlat Code Coverage"          # Coverage
 ```
 
-## Current State
+## Test File Organization
 
-**No automated tests exist.** The codebase has zero test projects, zero test files, and no test framework dependencies.
+**Location:**
+- Separate project: `src/TokenSqueeze.Tests/`
+- Mirror structure: test directories match source directories (`Commands/`, `Storage/`, `Parser/`, `Security/`, `Indexing/`, `Models/`)
+- Some root-level test files exist for cross-cutting concerns: `SmokeTest.cs`, `RobustnessTests.cs`, `DisposalTests.cs`, `StalenessCheckerTests.cs`, `ReindexOnQueryTests.cs`
 
-### What Exists Instead
+**Naming:**
+- Test files: `{Feature}Tests.cs` (e.g., `SymbolExtractorTests.cs`, `PathValidatorTests.cs`)
+- More specific test files: `{Feature}{Aspect}Tests.cs` (e.g., `FindCommandGlobTests.cs`, `IndexStoreDeleteTests.cs`, `DirectoryWalkerFilterTests.cs`)
 
-**Manual test fixtures:**
-- `tests/` directory contains sample source files for manual `parse-test` command validation
-- Files: `sample.py`, `sample.ts`, `sample.js`, `sample.cs`, `sample.c`, `sample.cpp`, `sample.h`, `sample.tsx`
-- These are input files for `token-squeeze parse-test <file>`, not automated tests
-
-**Hidden debug command:**
-- `ParseTestCommand` at `src/TokenSqueeze/Commands/ParseTestCommand.cs`
-- Parses a single file and dumps extracted symbols as JSON
-- Used for manual verification of parser output
-
-**Startup smoke test:**
-- `src/TokenSqueeze/Program.cs` lines 7-19: tree-sitter native library load check on every startup
-- Catches `DllNotFoundException` to fail fast if native libs are missing
-
-## Recommended Test Setup
-
-If adding tests to this project, follow these conventions:
-
-**Framework:** Use xUnit (standard for .NET 9 projects) with FluentAssertions.
-
-**Project structure:**
+**Structure:**
 ```
-src/
-├── TokenSqueeze/              # Existing main project
-└── TokenSqueeze.Tests/        # New test project
-    ├── TokenSqueeze.Tests.csproj
-    ├── Parser/
-    │   └── SymbolExtractorTests.cs
-    ├── Storage/
-    │   └── IndexStoreTests.cs
-    ├── Security/
-    │   └── PathValidatorTests.cs
-    ├── Indexing/
-    │   └── DirectoryWalkerTests.cs
-    └── Fixtures/
-        ├── sample.py
-        ├── sample.ts
-        └── ...
-```
-
-**Test project .csproj:**
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
-    <PackageReference Include="xunit" Version="2.*" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
-    <PackageReference Include="FluentAssertions" Version="7.*" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\TokenSqueeze\TokenSqueeze.csproj" />
-  </ItemGroup>
-</Project>
-```
-
-**Visibility note:** Most classes are `internal sealed`. To test them, add to the main project's `.csproj`:
-```xml
-<ItemGroup>
-  <InternalsVisibleTo Include="TokenSqueeze.Tests" />
-</ItemGroup>
+src/TokenSqueeze.Tests/
+├── Commands/
+│   ├── CliIntegrationTests.cs          # End-to-end CLI tests
+│   ├── ExtractCommandTests.cs          # Extract command behavior
+│   ├── ExtractCommandSecurityTests.cs  # Extract security edge cases
+│   ├── FindCommandTests.cs             # Find scoring and filtering
+│   ├── FindCommandGlobTests.cs         # Glob-to-regex conversion
+│   ├── GlobToRegexTests.cs             # GlobToRegex unit tests
+│   ├── IndexCommandTests.cs            # Index command behavior
+│   ├── ListCommandProjectionTests.cs   # List output shape
+│   └── OutlineHierarchyTests.cs        # Outline parent/child nesting
+├── Fixtures/                           # Sample source files for parser tests
+│   ├── sample.py, sample.js, sample.ts, sample.tsx
+│   ├── sample.cs, sample-advanced.cs
+│   ├── sample.c, sample.cpp, sample.h
+├── Helpers/
+│   ├── CliTestHarness.cs               # CLI integration test harness
+│   └── TestIndexBuilder.cs             # Test data factory
+├── Indexing/
+│   ├── DirectoryWalkerFilterTests.cs   # File filtering logic
+│   ├── DirectoryWalkerGitignoreTests.cs # Gitignore integration
+│   └── ParallelIndexingTests.cs        # Parallel indexing behavior
+├── Models/
+│   ├── ManifestTests.cs
+│   └── SymbolParseIdTests.cs           # Symbol.ParseId edge cases
+├── Parser/
+│   ├── SymbolExtractorTests.cs         # Per-language extraction
+│   ├── SymbolExtractorEdgeCaseTests.cs # Edge cases
+│   ├── CSharpExtractionTests.cs        # C#-specific parsing
+│   └── LanguageRegistryTests.cs        # Language loading
+├── Security/
+│   ├── PathValidatorTests.cs           # Path traversal validation
+│   ├── ProjectNameSanitizationTests.cs # Name sanitization
+│   ├── SecretDetectorTests.cs          # Secret file detection
+│   └── DirectoryWalkerSymlinkTests.cs  # Symlink escape
+├── Storage/
+│   ├── SplitStorageTests.cs            # Split format save/load
+│   ├── AtomicWriteTests.cs             # Concurrent write safety
+│   ├── IndexStoreDeleteTests.cs        # Delete validation
+│   ├── IndexStoreSaveTests.cs          # Save behavior
+│   ├── IndexStoreValidationTests.cs    # Validation edge cases
+│   ├── LegacyMigrationTests.cs         # v1->v2 migration
+│   ├── SearchIndexTests.cs             # Search index format
+│   ├── SelectiveLoadTests.cs           # Selective file loading
+│   └── StoragePathsTests.cs            # Path computation
+├── SmokeTest.cs                        # Basic wiring smoke tests
+├── RobustnessTests.cs                  # File size limits, depth limits, error isolation
+├── DisposalTests.cs                    # Resource disposal verification
+├── StalenessCheckerTests.cs            # Staleness detection
+├── ReindexOnQueryTests.cs              # Query-time reindex
+├── LanguageSpecValidationTests.cs      # Language spec consistency
+└── OutlineHierarchyTests.cs            # Outline nesting (duplicate location)
 ```
 
-## Testable Units
+## Test Structure
 
-**High-value targets (most logic, least I/O):**
-
-| Component | File | What to Test |
-|-----------|------|-------------|
-| `SymbolExtractor` | `src/TokenSqueeze/Parser/SymbolExtractor.cs` | Symbol extraction per language, signature building, docstring extraction, constant detection |
-| `LanguageRegistry` | `src/TokenSqueeze/Parser/LanguageRegistry.cs` | Extension mapping, parser creation, disposal |
-| `PathValidator` | `src/TokenSqueeze/Security/PathValidator.cs` | Path traversal detection, symlink escape detection |
-| `SecretDetector` | `src/TokenSqueeze/Security/SecretDetector.cs` | Secret file identification by name and extension |
-| `DirectoryWalker` | `src/TokenSqueeze/Indexing/DirectoryWalker.cs` | Skip directories, gitignore, binary detection |
-| `FindCommand` scoring | `src/TokenSqueeze/Commands/FindCommand.cs` | Search scoring logic, glob-to-regex conversion |
-
-**Lower priority (mostly I/O wiring):**
-
-| Component | File | Why Lower |
-|-----------|------|-----------|
-| `IndexStore` | `src/TokenSqueeze/Storage/IndexStore.cs` | Thin JSON serialization wrapper over filesystem |
-| `ProjectIndexer` | `src/TokenSqueeze/Indexing/ProjectIndexer.cs` | Orchestrator -- testable only as integration test |
-| CLI commands | `src/TokenSqueeze/Commands/*.cs` | Spectre.Console provides its own test harness, but these are thin wiring |
-
-## Recommended Test Patterns
-
-**Symbol extraction test (unit):**
+**Suite Organization:**
 ```csharp
-public class SymbolExtractorTests
+// Standard pattern: sealed class, IDisposable for cleanup
+public sealed class PathValidatorTests : IDisposable
 {
-    [Fact]
-    public void ExtractSymbols_PythonFunction_ReturnsCorrectSignature()
+    private readonly string _tempRoot;
+
+    public PathValidatorTests()
     {
-        using var registry = new LanguageRegistry();
-        var extractor = new SymbolExtractor(registry);
-        var spec = registry.GetSpecForExtension(".py")!;
-        var source = "def greet(name: str) -> str:\n    pass"u8.ToArray();
+        // Constructor = setup: create temp directory
+        _tempRoot = Path.Combine(Path.GetTempPath(), $"ts-pathval-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempRoot);
+    }
 
-        var symbols = extractor.ExtractSymbols("test.py", source, spec);
+    [Fact]
+    public void MethodUnderTest_Scenario_ExpectedResult()
+    {
+        // Arrange
+        var maliciousPath = Path.Combine(_tempRoot, "../../../etc/passwd");
 
-        symbols.Should().ContainSingle();
-        symbols[0].Name.Should().Be("greet");
-        symbols[0].Kind.Should().Be(SymbolKind.Function);
-        symbols[0].Signature.Should().Be("def greet(name: str) -> str");
+        // Act & Assert
+        Assert.Throws<SecurityException>(() =>
+            PathValidator.ValidateWithinRoot(maliciousPath, _tempRoot));
+    }
+
+    public void Dispose()
+    {
+        // Cleanup temp directories
+        if (Directory.Exists(_tempRoot))
+            Directory.Delete(_tempRoot, recursive: true);
     }
 }
 ```
 
-**Security test (unit):**
+**Test Method Naming:**
+- Pattern: `MethodOrFeature_Scenario_ExpectedBehavior`
+- Examples: `ValidateWithinRoot_RejectsTraversalPaths`, `Save_CreatesManifestWithFormatVersion2`, `ExactMatchScore_Returns325`
+- Some use shorter descriptive names: `Python_ExtractsExpectedSymbols`, `ListEmpty_ReturnsEmptyProjectsArray`
+
+**Attributes Used:**
+- `[Fact]` for single-case tests (majority)
+- `[Theory]` with `[InlineData]` for parameterized tests (security tests, parser tests)
+- `[Collection("CLI")]` for tests that share Console.Out (prevents parallel conflicts)
+
+## Test Isolation
+
+**Storage Isolation:**
+- `StoragePaths.TestRootOverride` static field redirects storage to temp directories
+- Every test class that touches storage sets this in constructor and clears in `Dispose()`
+- Pattern:
+
 ```csharp
-public class SecretDetectorTests
+public SomeTests()
 {
-    [Theory]
-    [InlineData(".env", true)]
-    [InlineData("credentials.json", true)]
-    [InlineData("app.config", false)]
-    [InlineData("private.key", true)]
-    public void IsSecretFile_DetectsCorrectly(string fileName, bool expected)
-    {
-        SecretDetector.IsSecretFile(fileName).Should().Be(expected);
-    }
+    _tempDir = Path.Combine(Path.GetTempPath(), "ts-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(_tempDir);
+    StoragePaths.TestRootOverride = _tempDir;
+}
+
+public void Dispose()
+{
+    StoragePaths.TestRootOverride = null;
+    if (Directory.Exists(_tempDir))
+        Directory.Delete(_tempDir, recursive: true);
 }
 ```
 
-**Binary detection test (unit):**
+**Console Output Isolation:**
+- `CliTestHarness` captures `Console.Out` via `Console.SetOut(new StringWriter())` and restores in `finally`
+- Tests using `CliTestHarness` must be in `[Collection("CLI")]` to prevent parallel Console.Out conflicts
+
+## CLI Integration Test Harness
+
+**Location:** `src/TokenSqueeze.Tests/Helpers/CliTestHarness.cs`
+
+**Purpose:** Full CLI integration testing -- boots the entire Spectre.Console.Cli command pipeline with real DI.
+
 ```csharp
-public class DirectoryWalkerTests
+// Usage pattern
+[Collection("CLI")]
+public sealed class MyCommandTests : IDisposable
 {
+    private readonly CliTestHarness _harness = new();
+
     [Fact]
-    public void IsBinaryFile_TextFile_ReturnsFalse()
+    public void SomeCommand_SomeScenario()
     {
-        var tempFile = Path.GetTempFileName();
-        File.WriteAllText(tempFile, "hello world");
+        // Create source files
+        var sourceDir = _harness.CreateSourceDir("project-name", new Dictionary<string, string>
+        {
+            ["hello.py"] = "def greet(name):\n    pass\n"
+        });
 
-        DirectoryWalker.IsBinaryFile(tempFile).Should().BeFalse();
+        // Run CLI command and capture JSON output
+        var (exitCode, output) = _harness.Run("index", sourceDir);
+        Assert.Equal(0, exitCode);
 
-        File.Delete(tempFile);
+        // Parse and assert JSON
+        using var doc = JsonDocument.Parse(output);
+        var root = doc.RootElement;
+        Assert.Equal("project-name", root.GetProperty("projectName").GetString());
     }
+
+    public void Dispose() => _harness.Dispose();
+}
+```
+
+**Key methods:**
+- `Run(params string[] args)` -> `(int exitCode, string output)`: Runs CLI command, returns exit code and stdout
+- `CreateSourceDir(string name, Dictionary<string, string> files)` -> `string`: Creates temp directory with files, returns path
+
+## Test Data Factory
+
+**Location:** `src/TokenSqueeze.Tests/Helpers/TestIndexBuilder.cs`
+
+**Purpose:** Builds `CodeIndex` and `Symbol` instances for unit tests without running the full indexer.
+
+```csharp
+// Create a test index with symbols
+var index = TestIndexBuilder.Create("myproject", "/tmp/myproject",
+    TestIndexBuilder.MakeSymbol("greet", file: "hello.py", kind: SymbolKind.Function),
+    TestIndexBuilder.MakeSymbol("Calculator", file: "calc.py", kind: SymbolKind.Class)
+);
+
+// Create a single test symbol with defaults
+var sym = TestIndexBuilder.MakeSymbol("foo");
+// Defaults: file="test.py", kind=Function, language="Python", signature="foo()"
+```
+
+## Fixtures
+
+**Location:** `src/TokenSqueeze.Tests/Fixtures/`
+
+**Purpose:** Real source files in each supported language for parser extraction tests.
+
+**Files:**
+- `sample.py`, `sample.js`, `sample.ts`, `sample.tsx` -- web/scripting languages
+- `sample.cs`, `sample-advanced.cs` -- C# samples (basic and advanced features)
+- `sample.c`, `sample.cpp`, `sample.h` -- C/C++ samples
+
+**Access pattern:**
+```csharp
+private static readonly string FixtureDir = Path.Combine(
+    Path.GetDirectoryName(typeof(SymbolExtractorTests).Assembly.Location)!,
+    "..", "..", "..", "Fixtures");
+
+private List<Symbol> ExtractFromFixture(string filename)
+{
+    var filePath = Path.Combine(FixtureDir, filename);
+    var sourceBytes = File.ReadAllBytes(filePath);
+    var ext = Path.GetExtension(filename);
+    var spec = _registry.GetSpecForExtension(ext)!;
+    return _extractor.ExtractSymbols(filePath, sourceBytes, spec);
 }
 ```
 
 ## Mocking
 
-**Framework:** Not yet established. Recommended: NSubstitute or Moq.
+**Framework:** None. No mocking library is used.
 
-**What to mock:**
-- Filesystem access in `IndexStore` and `DirectoryWalker` tests
-- Currently no interfaces exist, so mocking requires either:
-  - Extracting interfaces (`IIndexStore`, `ILanguageRegistry`)
-  - Using filesystem abstractions (`System.IO.Abstractions`)
-  - Testing against temp directories (integration-style)
+**Approach:** The codebase uses real implementations throughout tests:
+- Real `IndexStore` with `StoragePaths.TestRootOverride` for storage isolation
+- Real `LanguageRegistry` and `SymbolExtractor` for parser tests
+- Real `CliTestHarness` boots full DI container for integration tests
+- Real filesystem with temp directories for file-based tests
+
+**What to mock (if needed):** Nothing currently. The architecture uses concrete classes without interfaces. To add mocking, interfaces would need to be extracted for `IndexStore`, `LanguageRegistry`, etc.
 
 **What NOT to mock:**
-- `SymbolExtractor` -- test with real tree-sitter parsing (the native lib must load)
-- `LanguageRegistry` -- lightweight, manages native resources that are fast to create
-- `PathValidator` / `SecretDetector` -- pure logic, no dependencies
+- `LanguageRegistry` -- wraps native tree-sitter handles, must be real
+- `SymbolExtractor` -- core logic under test
+- Filesystem operations -- tests use real temp directories
 
-## Coverage
+## Assertion Patterns
 
-**Requirements:** None enforced
-**Current coverage:** 0%
+**JSON Output Assertions** (most common pattern in this codebase):
+```csharp
+var (exitCode, output) = _harness.Run("find", projectName, "greet");
+Assert.Equal(0, exitCode);
+using var doc = JsonDocument.Parse(output);
+var results = doc.RootElement.GetProperty("results");
+Assert.True(results.GetArrayLength() >= 1);
+Assert.Equal("greet", results[0].GetProperty("name").GetString());
+```
+
+**Symbol Extraction Assertions:**
+```csharp
+// Custom assertion helpers in SymbolExtractorTests
+private static void AssertContainsSymbol(List<Symbol> symbols, string name, SymbolKind kind)
+{
+    Assert.Contains(symbols, s => s.Name == name && s.Kind == kind);
+}
+
+private static void AssertDoesNotContainKind(List<Symbol> symbols, string name, SymbolKind kind)
+{
+    Assert.DoesNotContain(symbols, s => s.Name == name && s.Kind == kind);
+}
+```
+
+**Exception Assertions:**
+```csharp
+Assert.Throws<SecurityException>(() =>
+    PathValidator.ValidateWithinRoot(maliciousPath, _tempRoot));
+
+Assert.Throws<ObjectDisposedException>(() =>
+    registry.GetOrCreateParser("Python"));
+```
+
+**Structural Verification** (verifying source code properties):
+```csharp
+// Some tests read source code to verify structural invariants
+var source = File.ReadAllText(sourcePath);
+Assert.True(afterRun.Contains("Dispose", StringComparison.Ordinal),
+    "Program.cs must call Dispose after app.Run");
+```
 
 ## Test Types
 
+**Smoke Tests:**
+- `src/TokenSqueeze.Tests/SmokeTest.cs` -- verifies basic wiring (types resolve, native libs load)
+- 2 tests, runs fast
+
 **Unit Tests:**
-- Focus on `Parser/`, `Security/`, and search scoring logic
-- These contain the core algorithmic complexity
+- Parser tests (`SymbolExtractorTests.cs`, `CSharpExtractionTests.cs`, `SymbolExtractorEdgeCaseTests.cs`)
+- Model tests (`SymbolParseIdTests.cs`, `ManifestTests.cs`)
+- Security tests (`PathValidatorTests.cs`, `SecretDetectorTests.cs`, `ProjectNameSanitizationTests.cs`)
+- Storage path tests (`StoragePathsTests.cs`, `GlobToRegexTests.cs`)
+- Disposal tests (`DisposalTests.cs`)
 
 **Integration Tests:**
-- Index a temp directory with known files, verify round-trip through `ProjectIndexer` -> `IndexStore` -> query commands
-- Requires tree-sitter native libraries available at test runtime
+- CLI integration (`CliIntegrationTests.cs`) -- full command pipeline via `CliTestHarness`
+- Command-specific integration (`FindCommandTests.cs`, `ExtractCommandTests.cs`, `IndexCommandTests.cs`)
+- Storage integration (`SplitStorageTests.cs`, `LegacyMigrationTests.cs`, `SearchIndexTests.cs`)
+- Indexing integration (`DirectoryWalkerFilterTests.cs`, `DirectoryWalkerGitignoreTests.cs`, `ParallelIndexingTests.cs`)
+- Robustness (`RobustnessTests.cs` -- file size limits, depth limits, error isolation)
+- Reindex on query (`ReindexOnQueryTests.cs`, `StalenessCheckerTests.cs`)
 
 **E2E Tests:**
-- Not used. Could invoke the CLI binary and assert JSON stdout, but this is fragile and slow.
+- Not present as a separate category; `CliIntegrationTests.cs` is the closest equivalent (index -> find -> extract -> purge lifecycle)
+
+## Coverage
+
+**Requirements:** None enforced. coverlet.collector is installed but no minimum threshold is configured.
+
+**View Coverage:**
+```bash
+dotnet test src/TokenSqueeze.Tests/TokenSqueeze.Tests.csproj --collect:"XPlat Code Coverage"
+# Results in TestResults/*/coverage.cobertura.xml
+```
+
+## Test Collection Serialization
+
+**The `[Collection("CLI")]` pattern is critical:**
+- Tests that use `CliTestHarness` or modify `StoragePaths.TestRootOverride` MUST be in `[Collection("CLI")]`
+- This prevents xUnit from running them in parallel (they share global state: `Console.Out` and `StoragePaths.TestRootOverride`)
+- Defined in `src/TokenSqueeze.Tests/Helpers/CliTestHarness.cs`:
+
+```csharp
+[CollectionDefinition("CLI")]
+public sealed class CliCollection : ICollectionFixture<CliTestHarness> { }
+```
+
+**Tests NOT in `[Collection("CLI")]`** run in parallel and must not touch global state:
+- `SmokeTest.cs` -- only reads, no writes
+- `SymbolExtractorTests.cs` -- uses own `LanguageRegistry` instance
+- `SecretDetectorTests.cs` -- pure static method tests
+- `PathValidatorTests.cs` -- uses own temp directory
+
+## Adding New Tests
+
+**New unit test for an existing feature:**
+1. Add test methods to the existing `*Tests.cs` file in the matching directory
+2. Use `[Fact]` for single cases, `[Theory]` + `[InlineData]` for parameterized
+3. Follow naming: `MethodOrFeature_Scenario_ExpectedBehavior`
+
+**New test class for a new feature:**
+1. Create `src/TokenSqueeze.Tests/{Directory}/{Feature}Tests.cs` mirroring the source directory
+2. If the test touches storage or Console.Out, add `[Collection("CLI")]` and implement `IDisposable`
+3. Use `StoragePaths.TestRootOverride` for storage isolation
+4. If testing CLI commands, use `CliTestHarness` from `Helpers/`
+
+**New parser fixture:**
+1. Add sample source file to `src/TokenSqueeze.Tests/Fixtures/sample.{ext}`
+2. Write extraction test in `src/TokenSqueeze.Tests/Parser/` using `ExtractFromFixture()`
 
 ---
 

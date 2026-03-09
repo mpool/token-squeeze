@@ -1,11 +1,12 @@
 using System.ComponentModel;
 using Spectre.Console.Cli;
 using TokenSqueeze.Infrastructure;
+using TokenSqueeze.Parser;
 using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class OutlineCommand : Command<OutlineCommand.Settings>
+internal sealed class OutlineCommand(IndexStore store, LanguageRegistry registry) : Command<OutlineCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -20,9 +21,20 @@ internal sealed class OutlineCommand : Command<OutlineCommand.Settings>
 
     public override int Execute(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        var store = new IndexStore();
-        var index = store.Load(settings.Name);
-        if (index is null)
+        try
+        {
+        // Legacy migration
+        if (LegacyMigration.TryMigrateIfNeeded(settings.Name, store, registry, out var migrationError))
+        {
+            if (migrationError is not null)
+            {
+                JsonOutput.WriteError(migrationError);
+                return 1;
+            }
+        }
+
+        var manifest = QueryReindexer.EnsureFresh(settings.Name, store, registry, cancellation);
+        if (manifest is null)
         {
             JsonOutput.WriteError($"Project not found: {settings.Name}");
             return 1;
@@ -30,62 +42,71 @@ internal sealed class OutlineCommand : Command<OutlineCommand.Settings>
 
         var requestedFile = settings.File.Replace('\\', '/');
 
-        var fileSymbols = index.Symbols
-            .Where(s =>
+        // Find the matching file key in the manifest
+        string? matchedKey = null;
+        foreach (var key in manifest.Files.Keys)
+        {
+            var normalizedKey = key.Replace('\\', '/');
+            if (string.Equals(normalizedKey, requestedFile, StringComparison.OrdinalIgnoreCase)
+                || normalizedKey.EndsWith("/" + requestedFile, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedKey, requestedFile.TrimStart('/'), StringComparison.OrdinalIgnoreCase))
             {
-                var symbolFile = s.File.Replace('\\', '/');
-                return string.Equals(symbolFile, requestedFile, StringComparison.OrdinalIgnoreCase)
-                    || symbolFile.EndsWith("/" + requestedFile, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(symbolFile, requestedFile.TrimStart('/'), StringComparison.OrdinalIgnoreCase);
-            })
-            .ToList();
+                matchedKey = key;
+                break;
+            }
+        }
 
-        if (fileSymbols.Count == 0)
+        if (matchedKey is null)
         {
             JsonOutput.WriteError($"File not found in index: {settings.File}");
             return 1;
         }
 
-        // Build hierarchy: top-level symbols (no parent) as roots, others nested
+        var fileSymbols = store.LoadFileSymbols(settings.Name, matchedKey);
+        if (fileSymbols is null || fileSymbols.Count == 0)
+        {
+            JsonOutput.WriteError($"File not found in index: {settings.File}");
+            return 1;
+        }
+
+        // Build hierarchy: top-level symbols (no parent) as roots, others nested recursively
         var roots = fileSymbols.Where(s => s.Parent is null).ToList();
         var childrenByParent = fileSymbols
             .Where(s => s.Parent is not null)
             .GroupBy(s => s.Parent!)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var symbolNodes = roots.Select(root =>
+        Dictionary<string, object?> BuildNode(Models.Symbol symbol)
         {
-            var children = childrenByParent.TryGetValue(root.Name, out var kids)
-                ? kids.Select(c => new
-                {
-                    name = c.Name,
-                    kind = c.Kind.ToString(),
-                    signature = c.Signature,
-                    line = c.Line,
-                    endLine = c.EndLine
-                }).ToArray()
-                : null;
-
-            return new
+            var node = new Dictionary<string, object?>
             {
-                name = root.Name,
-                kind = root.Kind.ToString(),
-                signature = root.Signature,
-                line = root.Line,
-                endLine = root.EndLine,
-                children = children?.Length > 0 ? children : null
+                ["name"] = symbol.Name,
+                ["kind"] = symbol.Kind.ToString(),
+                ["signature"] = symbol.Signature,
+                ["line"] = symbol.Line,
+                ["endLine"] = symbol.EndLine
             };
-        }).ToArray();
 
-        // Resolve the actual matched file path for output
-        var matchedFile = fileSymbols.First().File;
+            if (childrenByParent.TryGetValue(symbol.QualifiedName, out var kids) && kids.Count > 0)
+                node["children"] = kids.Select(BuildNode).ToArray();
+
+            return node;
+        }
+
+        var symbolNodes = roots.Select(BuildNode).ToArray();
 
         JsonOutput.Write(new
         {
-            file = matchedFile,
+            file = matchedKey,
             symbols = symbolNodes
         });
 
         return 0;
+        }
+        catch (Exception ex)
+        {
+            JsonOutput.WriteError(ex.Message);
+            return 1;
+        }
     }
 }
