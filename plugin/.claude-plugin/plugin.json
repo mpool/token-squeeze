@@ -5,5 +5,10 @@
   "author": {
     "name": "Max Pool"
   },
-  "keywords": ["indexing", "symbols", "tree-sitter", "code-navigation"]
+  "keywords": [
+    "indexing",
+    "symbols",
+    "tree-sitter",
+    "code-navigation"
+  ]
 }
