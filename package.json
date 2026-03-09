@@ -1,6 +1,6 @@
 {
   "name": "token-squeeze",
-  "version": "1.2.0",
+  "version": "2.0.1",
   "description": "Codebase indexing and symbol retrieval plugin for Claude Code token optimization",
   "bin": {
     "token-squeeze": "installer/install.js"

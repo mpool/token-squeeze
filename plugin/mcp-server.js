@@ -188,7 +188,7 @@ function errorResult(message) {
 
 const SERVER_INFO = {
   name: "token-squeeze",
-  version: "1.2.0",
+  version: "2.0.1",
 };
 
 const CAPABILITIES = {
