@@ -6,4 +6,5 @@ public sealed record IndexedFile
     public required string Hash { get; init; }
     public required string Language { get; init; }
     public required int SymbolCount { get; init; }
+    public DateTime? LastModifiedUtc { get; init; }
 }

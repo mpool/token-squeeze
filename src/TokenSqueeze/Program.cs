@@ -1,24 +1,16 @@
+using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console.Cli;
 using TokenSqueeze.Commands;
 using TokenSqueeze.Infrastructure;
+using TokenSqueeze.Parser;
+using TokenSqueeze.Storage;
 
-// Tree-sitter native library smoke test -- validates that native libs loaded correctly.
-// Runs on every startup; fast (single parse of a tiny string), logs only to stderr.
-try
-{
-    using var language = new TreeSitter.Language("Python");
-    using var parser = new TreeSitter.Parser(language);
-    using var tree = parser.Parse("def hello(): pass");
-    var rootType = tree?.RootNode?.Type ?? "(null)";
-    Console.Error.WriteLine($"TreeSitter loaded: root node type = {rootType}");
-}
-catch (DllNotFoundException ex)
-{
-    JsonOutput.WriteError($"TreeSitter native library failed to load: {ex.Message}");
-    return 1;
-}
+var services = new ServiceCollection();
+services.AddSingleton<LanguageRegistry>();
+services.AddSingleton<IndexStore>();
+var registrar = new TypeRegistrar(services);
 
-var app = new CommandApp();
+var app = new CommandApp(registrar);
 app.Configure(config =>
 {
     config.SetApplicationName("token-squeeze");
@@ -36,7 +28,8 @@ app.Configure(config =>
     config.AddCommand<FindCommand>("find")
         .WithDescription("Search symbols by query");
     config.AddCommand<ParseTestCommand>("parse-test")
-        .WithDescription("(hidden) Parse a file and dump extracted symbols as JSON");
+        .IsHidden()
+        .WithDescription("Parse a file and dump extracted symbols as JSON");
 
 #if DEBUG
     config.PropagateExceptions();
@@ -44,4 +37,10 @@ app.Configure(config =>
 #endif
 });
 
-return app.Run(args);
+var exitCode = app.Run(args);
+
+// Dispose the service provider to release native tree-sitter handles (DEBT-02)
+if (registrar.ServiceProvider is IDisposable disposable)
+    disposable.Dispose();
+
+return exitCode;

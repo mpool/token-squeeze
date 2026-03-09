@@ -5,7 +5,7 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class PurgeCommand : Command<PurgeCommand.Settings>
+internal sealed class PurgeCommand(IndexStore store) : Command<PurgeCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -18,10 +18,9 @@ internal sealed class PurgeCommand : Command<PurgeCommand.Settings>
     {
         try
         {
-            var store = new IndexStore();
-            var existing = store.Load(settings.Name);
+            var manifest = store.LoadManifest(settings.Name);
 
-            if (existing is null)
+            if (manifest is null && !store.IsLegacyFormat(settings.Name))
             {
                 JsonOutput.WriteError($"Project not found: {settings.Name}");
                 return 1;

@@ -1,0 +1,25 @@
+{
+  "name": "token-squeeze",
+  "version": "1.0.0",
+  "description": "Tree-sitter codebase indexing and symbol retrieval plugin for Claude Code",
+  "bin": {
+    "token-squeeze": "installer/install.js"
+  },
+  "files": [
+    "installer/",
+    "plugin/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mpool/token-squeeze.git"
+  },
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "tree-sitter",
+    "indexing",
+    "code-navigation"
+  ],
+  "author": "Max Pool",
+  "license": "MIT"
+}

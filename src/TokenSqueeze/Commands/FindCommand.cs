@@ -3,11 +3,12 @@ using System.Text.RegularExpressions;
 using Spectre.Console.Cli;
 using TokenSqueeze.Infrastructure;
 using TokenSqueeze.Models;
+using TokenSqueeze.Parser;
 using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class FindCommand : Command<FindCommand.Settings>
+internal sealed class FindCommand(IndexStore store, LanguageRegistry registry) : Command<FindCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -35,9 +36,21 @@ internal sealed class FindCommand : Command<FindCommand.Settings>
 
     public override int Execute(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        var store = new IndexStore();
-        var index = store.Load(settings.Name);
-        if (index is null)
+        try
+        {
+        // Legacy migration
+        if (LegacyMigration.TryMigrateIfNeeded(settings.Name, store, registry, out var migrationError))
+        {
+            if (migrationError is not null)
+            {
+                JsonOutput.WriteError(migrationError);
+                return 1;
+            }
+        }
+
+        var manifest = QueryReindexer.EnsureFresh(settings.Name, store, registry, cancellation);
+        var symbols = store.LoadAllSymbols(settings.Name);
+        if (manifest is null || symbols is null)
         {
             JsonOutput.WriteError($"Project not found: {settings.Name}");
             return 1;
@@ -64,23 +77,37 @@ internal sealed class FindCommand : Command<FindCommand.Settings>
         }
 
         var query = settings.Query;
-        var scored = new List<(Symbol symbol, int score)>();
+        var scored = new List<(SearchSymbol symbol, int score)>();
 
-        foreach (var symbol in index.Symbols)
+        // Pre-filter by kind and path before scoring
+        IEnumerable<SearchSymbol> candidates = symbols;
+
+        if (kindFilter.HasValue)
+            candidates = candidates.Where(s => s.Kind == kindFilter.Value);
+
+        if (pathRegex is not null)
         {
-            // Apply kind filter
-            if (kindFilter.HasValue && symbol.Kind != kindFilter.Value)
-                continue;
-
-            // Apply path filter
-            if (pathRegex is not null)
+            var loggedTimeout = false;
+            candidates = candidates.Where(s =>
             {
-                var normalizedFile = symbol.File.Replace('\\', '/');
-                if (!pathRegex.IsMatch(normalizedFile))
-                    continue;
-            }
+                try
+                {
+                    return pathRegex.IsMatch(s.File.Replace('\\', '/'));
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    if (!loggedTimeout)
+                    {
+                        Console.Error.WriteLine("Warning: path filter regex timed out; some results may be excluded.");
+                        loggedTimeout = true;
+                    }
+                    return false;
+                }
+            });
+        }
 
-            // Score against query
+        foreach (var symbol in candidates)
+        {
             int score = 0;
 
             if (string.Equals(symbol.Name, query, StringComparison.OrdinalIgnoreCase))
@@ -102,9 +129,12 @@ internal sealed class FindCommand : Command<FindCommand.Settings>
                 scored.Add((symbol, score));
         }
 
-        var results = scored
+        var topResults = scored
             .OrderByDescending(x => x.score)
             .Take(settings.Limit)
+            .ToList();
+
+        var results = topResults
             .Select(x => new
             {
                 id = x.symbol.Id,
@@ -125,18 +155,46 @@ internal sealed class FindCommand : Command<FindCommand.Settings>
         });
 
         return 0;
+        }
+        catch (Exception ex)
+        {
+            JsonOutput.WriteError(ex.Message);
+            return 1;
+        }
     }
 
-    private static Regex GlobToRegex(string glob)
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+
+    internal static Regex GlobToRegex(string glob)
     {
+        // SEC-04: Reject overly long globs to prevent ReDoS
+        if (glob.Length > 200)
+            throw new ArgumentException($"Glob pattern exceeds maximum length of 200 characters (was {glob.Length}).");
+
         var normalized = glob.Replace('\\', '/');
+
+        // Handle rooted patterns: strip leading / and anchor to start
+        var isRooted = normalized.StartsWith('/');
+        if (isRooted)
+            normalized = normalized.TrimStart('/');
+
         // Escape regex special chars except * and ?
+        // Handle **/ (globstar + separator) as optional directory prefix
         var pattern = Regex.Escape(normalized)
+            .Replace("\\*\\*/", "<<GLOBSTAR_SEP>>")
             .Replace("\\*\\*", "<<GLOBSTAR>>")
             .Replace("\\*", "[^/]*")
             .Replace("\\?", "[^/]")
+            .Replace("<<GLOBSTAR_SEP>>", "(.*/)?")
             .Replace("<<GLOBSTAR>>", ".*");
 
-        return new Regex("^" + pattern + "$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        var options = RegexOptions.IgnoreCase | RegexOptions.Compiled;
+
+        // Rooted patterns or globstar patterns anchor to start
+        if (isRooted || normalized.StartsWith("**/"))
+            return new Regex("^" + pattern + "$", options, RegexTimeout);
+
+        // Non-rooted patterns allow partial path matching (match after any /)
+        return new Regex("(^|/)" + pattern + "$", options, RegexTimeout);
     }
 }

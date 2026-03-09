@@ -5,7 +5,9 @@ namespace TokenSqueeze.Indexing;
 
 internal sealed class DirectoryWalker
 {
-    private static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    public const long MaxFileSize = 1_048_576;
+
+    internal static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         "node_modules", ".git", "bin", "obj", ".vs", ".idea",
         "__pycache__", ".mypy_cache", ".pytest_cache",
@@ -14,95 +16,147 @@ internal sealed class DirectoryWalker
 
     private readonly LanguageRegistry _registry;
     private readonly string _rootPath;
-    private readonly Ignore.Ignore? _gitignore;
+    private readonly long _maxFileSize;
 
-    public DirectoryWalker(LanguageRegistry registry, string rootPath)
+    public DirectoryWalker(LanguageRegistry registry, string rootPath, long maxFileSize = MaxFileSize)
     {
         _registry = registry;
         _rootPath = Path.GetFullPath(rootPath);
+        _maxFileSize = maxFileSize;
+    }
 
-        var gitignorePath = Path.Combine(_rootPath, ".gitignore");
+    public IEnumerable<WalkedFile> Walk()
+    {
+        return WalkDirectory(_rootPath, new List<GitignoreRule>());
+    }
+
+    private IEnumerable<WalkedFile> WalkDirectory(string dir, List<GitignoreRule> gitignoreStack)
+    {
+        // On entry: check for .gitignore in this directory
+        bool addedGitignore = false;
+        var gitignorePath = Path.Combine(dir, ".gitignore");
         if (File.Exists(gitignorePath))
         {
-            _gitignore = new Ignore.Ignore();
+            var ignore = new Ignore.Ignore();
             foreach (var line in File.ReadAllLines(gitignorePath))
             {
                 var trimmed = line.Trim();
                 if (trimmed.Length > 0 && !trimmed.StartsWith('#'))
-                    _gitignore.Add(trimmed);
+                    ignore.Add(trimmed);
             }
+            gitignoreStack.Add(new GitignoreRule(dir, ignore));
+            addedGitignore = true;
         }
-    }
 
-    public IEnumerable<string> Walk()
-    {
-        var options = new EnumerationOptions
+        // Enumerate files in this directory (non-recursive)
+        IEnumerable<string> files;
+        try
         {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.System
-        };
+            files = Directory.EnumerateFiles(dir);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            files = [];
+        }
 
-        foreach (var file in Directory.EnumerateFiles(_rootPath, "*", options))
+        foreach (var file in files)
         {
             var relativePath = Path.GetRelativePath(_rootPath, file)
                 .Replace('\\', '/');
 
-            // 1. Skip built-in directories
-            if (HasSkippedSegment(relativePath))
+            // 1. Gitignore stack check
+            if (IsIgnoredByStack(file, gitignoreStack))
                 continue;
 
-            // 2. .gitignore check
-            if (_gitignore != null && _gitignore.IsIgnored(relativePath))
-                continue;
-
-            // 3. Secret file check
+            // 2. Secret file check
             if (SecretDetector.IsSecretFile(file))
                 continue;
 
-            // 4. Extension check (supported language?)
+            // 3. Extension check (supported language?)
             var ext = Path.GetExtension(file);
             if (string.IsNullOrEmpty(ext) || _registry.GetSpecForExtension(ext) is null)
                 continue;
 
-            // 5. Binary file check
-            if (IsBinaryFile(file))
+            // 4. File size pre-check
+            var fileInfo = new FileInfo(file);
+            if (fileInfo.Length > _maxFileSize)
+            {
+                Console.Error.WriteLine($"Skipping oversized file ({fileInfo.Length:N0} bytes): {relativePath}");
                 continue;
+            }
 
-            // 6. Symlink escape check
+            // 5. Symlink escape check (before reading bytes — SEC-03)
             if (PathValidator.IsSymlinkEscape(file, _rootPath))
                 continue;
 
-            yield return file;
+            // 6. Read file and binary content check
+            byte[] fileBytes;
+            try
+            {
+                fileBytes = File.ReadAllBytes(file);
+            }
+            catch
+            {
+                continue; // Fail safe: skip unreadable files
+            }
+
+            if (fileBytes.Length > 0 && IsBinaryContent(fileBytes))
+                continue;
+
+            yield return new WalkedFile(file, fileBytes);
         }
+
+        // Enumerate subdirectories
+        IEnumerable<string> subdirs;
+        try
+        {
+            subdirs = Directory.EnumerateDirectories(dir);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            subdirs = [];
+        }
+
+        foreach (var subDir in subdirs)
+        {
+            var dirName = Path.GetFileName(subDir);
+
+            // Skip built-in directories
+            if (SkippedDirectories.Contains(dirName))
+                continue;
+
+            // Check if directory is ignored by gitignore stack
+            if (IsIgnoredByStack(subDir + Path.DirectorySeparatorChar, gitignoreStack))
+                continue;
+
+            foreach (var walkedFile in WalkDirectory(subDir, gitignoreStack))
+                yield return walkedFile;
+        }
+
+        // On exit: remove gitignore if we added one
+        if (addedGitignore)
+            gitignoreStack.RemoveAt(gitignoreStack.Count - 1);
     }
 
-    private static bool HasSkippedSegment(string relativePath)
+    private bool IsIgnoredByStack(string fullPath, List<GitignoreRule> gitignoreStack)
     {
-        var segments = relativePath.Split('/');
-        for (int i = 0; i < segments.Length - 1; i++) // exclude filename
+        foreach (var rule in gitignoreStack)
         {
-            if (SkippedDirectories.Contains(segments[i]))
+            var relativePath = Path.GetRelativePath(rule.BaseDir, fullPath)
+                .Replace('\\', '/');
+            if (rule.Ignore.IsIgnored(relativePath))
                 return true;
         }
         return false;
     }
 
-    internal static bool IsBinaryFile(string filePath)
+    internal static bool IsBinaryContent(ReadOnlySpan<byte> content)
     {
-        try
-        {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            Span<byte> buffer = stackalloc byte[8192];
-            var bytesRead = stream.Read(buffer);
-            if (bytesRead == 0)
-                return false;
-
-            return buffer[..bytesRead].Contains((byte)0);
-        }
-        catch
-        {
-            return true; // Fail safe: treat unreadable as binary
-        }
+        var checkLength = Math.Min(content.Length, 8192);
+        return content[..checkLength].Contains((byte)0);
     }
+
+    private sealed record GitignoreRule(string BaseDir, Ignore.Ignore Ignore);
 }
+
+internal sealed record WalkedFile(string Path, byte[] Bytes);

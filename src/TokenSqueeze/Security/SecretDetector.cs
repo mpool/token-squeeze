@@ -26,6 +26,17 @@ internal static class SecretDetector
         ".keystore"
     ];
 
+    private static readonly string[] SecretNamePrefixes =
+    [
+        ".env"
+    ];
+
+    private static readonly string[] SecretNameSubstrings =
+    [
+        "secret",
+        "credential"
+    ];
+
     public static bool IsSecretFile(string filePath)
     {
         var fileName = Path.GetFileName(filePath);
@@ -33,7 +44,18 @@ internal static class SecretDetector
             return true;
 
         var extension = Path.GetExtension(filePath);
-        return SecretExtensions.Any(ext =>
-            string.Equals(ext, extension, StringComparison.OrdinalIgnoreCase));
+        if (SecretExtensions.Any(ext =>
+            string.Equals(ext, extension, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        if (SecretNamePrefixes.Any(p =>
+            fileName.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        if (SecretNameSubstrings.Any(s =>
+            fileName.Contains(s, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
     }
 }

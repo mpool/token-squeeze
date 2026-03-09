@@ -8,6 +8,8 @@ namespace TokenSqueeze.Parser;
 
 public sealed partial class SymbolExtractor
 {
+    private const int MaxTreeDepth = 128;
+
     private readonly LanguageRegistry _registry;
 
     [GeneratedRegex(@"^[A-Z][A-Z0-9_]+$")]
@@ -27,7 +29,7 @@ public sealed partial class SymbolExtractor
         var symbols = new List<Symbol>();
         if (tree?.RootNode is { } root)
         {
-            WalkTree(root, spec, sourceBytes, filePath, symbols, parentSymbol: null, scopeParts: []);
+            WalkTree(root, spec, sourceBytes, filePath, symbols, parentSymbol: null, scopeParts: [], depth: 0);
         }
 
         return symbols;
@@ -40,14 +42,20 @@ public sealed partial class SymbolExtractor
         string filePath,
         List<Symbol> symbols,
         Symbol? parentSymbol,
-        List<string> scopeParts)
+        List<string> scopeParts,
+        int depth)
     {
+        if (depth > MaxTreeDepth)
+        {
+            Console.Error.WriteLine($"Warning: AST depth limit ({MaxTreeDepth}) reached in {filePath}, truncating tree walk");
+            return;
+        }
+
         // Check if this node is a symbol we extract
         if (spec.SymbolNodeTypes.TryGetValue(node.Type, out var kind))
         {
             // Function inside a container is a Method
-            if (kind == SymbolKind.Function && parentSymbol != null
-                && spec.ContainerNodeTypes.Any(ct => scopeParts.Count > 0))
+            if (kind == SymbolKind.Function && scopeParts.Count > 0)
             {
                 kind = SymbolKind.Method;
             }
@@ -63,7 +71,7 @@ public sealed partial class SymbolExtractor
                 {
                     var newScope = new List<string>(scopeParts) { name };
                     foreach (var child in node.NamedChildren)
-                        WalkTree(child, spec, sourceBytes, filePath, symbols, symbol, newScope);
+                        WalkTree(child, spec, sourceBytes, filePath, symbols, symbol, newScope, depth + 1);
                 }
 
                 // Don't recurse into extracted symbols (prevents picking up
@@ -93,7 +101,7 @@ public sealed partial class SymbolExtractor
 
         // Recurse children
         foreach (var child in node.NamedChildren)
-            WalkTree(child, spec, sourceBytes, filePath, symbols, parentSymbol, scopeParts);
+            WalkTree(child, spec, sourceBytes, filePath, symbols, parentSymbol, scopeParts, depth + 1);
     }
 
     private void TryExtractConstant(
@@ -105,46 +113,45 @@ public sealed partial class SymbolExtractor
         Symbol? parentSymbol,
         List<string> scopeParts)
     {
-        if (spec.LanguageId == "Python")
-        {
-            // Python: module-level assignment with ALL_CAPS identifier
-            if (parentSymbol != null) return; // Must be module-level
+        if (spec.ConstantExtractor == null) return;
+        var name = spec.ConstantExtractor(node, spec, parentSymbol);
+        if (string.IsNullOrEmpty(name)) return;
+        var symbol = BuildSymbol(node, spec, sourceBytes, filePath, name, SymbolKind.Constant, parentSymbol, scopeParts);
+        symbols.Add(symbol);
+    }
 
-            var leftNode = node.NamedChildren.FirstOrDefault();
-            if (leftNode?.Type != "identifier") return;
+    internal static string? ExtractPythonConstant(Node node, LanguageSpec spec, Symbol? parentSymbol)
+    {
+        // Python: module-level assignment with ALL_CAPS identifier
+        if (parentSymbol != null) return null; // Must be module-level
 
-            var name = leftNode.Text;
-            if (!AllCapsPattern().IsMatch(name)) return;
+        var leftNode = node.NamedChildren.FirstOrDefault();
+        if (leftNode?.Type != "identifier") return null;
 
-            var symbol = BuildSymbol(node, spec, sourceBytes, filePath, name, SymbolKind.Constant, parentSymbol, scopeParts);
-            symbols.Add(symbol);
-        }
-        else if (spec.LanguageId is "JavaScript" or "TypeScript" or "Tsx")
-        {
-            // JS/TS: lexical_declaration starting with "const"
-            var nodeText = node.Text;
-            if (!nodeText.StartsWith("const ")) return;
+        var name = leftNode.Text;
+        if (!AllCapsPattern().IsMatch(name)) return null;
 
-            var declarator = node.NamedChildren.FirstOrDefault(c => c.Type == "variable_declarator");
-            if (declarator == null) return;
+        return name;
+    }
 
-            var nameNode = TryGetField(declarator, "name");
-            var name = nameNode?.Text;
-            if (string.IsNullOrEmpty(name)) return;
+    internal static string? ExtractJsConstant(Node node, LanguageSpec spec, Symbol? parentSymbol)
+    {
+        // JS/TS: lexical_declaration starting with "const"
+        var nodeText = node.Text;
+        if (!nodeText.StartsWith("const ")) return null;
 
-            var symbol = BuildSymbol(node, spec, sourceBytes, filePath, name, SymbolKind.Constant, parentSymbol, scopeParts);
-            symbols.Add(symbol);
-        }
-        else if (spec.LanguageId is "C" or "Cpp")
-        {
-            // C/C++: preproc_def -- #define NAME VALUE
-            var nameNode = TryGetField(node, "name");
-            var name = nameNode?.Text;
-            if (string.IsNullOrEmpty(name)) return;
+        var declarator = node.NamedChildren.FirstOrDefault(c => c.Type == "variable_declarator");
+        if (declarator == null) return null;
 
-            var symbol = BuildSymbol(node, spec, sourceBytes, filePath, name, SymbolKind.Constant, parentSymbol, scopeParts);
-            symbols.Add(symbol);
-        }
+        var nameNode = TryGetField(declarator, "name");
+        return nameNode?.Text;
+    }
+
+    internal static string? ExtractCConstant(Node node, LanguageSpec spec, Symbol? parentSymbol)
+    {
+        // C/C++: preproc_def -- #define NAME VALUE
+        var nameNode = TryGetField(node, "name");
+        return nameNode?.Text;
     }
 
     private Symbol BuildSymbol(
@@ -172,7 +179,7 @@ public sealed partial class SymbolExtractor
             Language = spec.DisplayName,
             Signature = signature,
             Docstring = docstring,
-            Parent = parentSymbol?.Id,
+            Parent = parentSymbol?.QualifiedName,
             Line = node.StartPosition.Row + 1,
             EndLine = node.EndPosition.Row + 1,
             ByteOffset = node.StartIndex,
@@ -321,15 +328,9 @@ public sealed partial class SymbolExtractor
                 returnText = returnNode.Text;
         }
 
-        return spec.LanguageId switch
-        {
-            "Python" => BuildPythonSignature(name, kind, paramsText, returnText),
-            "JavaScript" => BuildJavaScriptSignature(name, kind, paramsText),
-            "TypeScript" or "Tsx" => BuildTypeScriptSignature(name, kind, paramsText, returnText),
-            "C-Sharp" => BuildCSharpSignature(name, kind, paramsText, returnText),
-            "C" or "Cpp" => BuildCCppSignature(name, kind),
-            _ => $"{name}{paramsText}",
-        };
+        if (spec.SignatureBuilder != null)
+            return spec.SignatureBuilder(name, kind, paramsText, returnText);
+        return $"{name}{paramsText}";
     }
 
     private static string BuildCFunctionSignature(Node functionDef, string name)
@@ -340,7 +341,7 @@ public sealed partial class SymbolExtractor
         return string.IsNullOrEmpty(returnType) ? $"{name}{paramsText}" : $"{returnType} {name}{paramsText}";
     }
 
-    private static string BuildCCppSignature(string name, SymbolKind kind)
+    internal static string BuildCCppSignature(string name, SymbolKind kind, string paramsText, string returnText)
     {
         return kind switch
         {
@@ -349,7 +350,7 @@ public sealed partial class SymbolExtractor
         };
     }
 
-    private static string BuildPythonSignature(string name, SymbolKind kind, string paramsText, string returnText)
+    internal static string BuildPythonSignature(string name, SymbolKind kind, string paramsText, string returnText)
     {
         if (kind == SymbolKind.Class)
             return $"class {name}";
@@ -360,7 +361,7 @@ public sealed partial class SymbolExtractor
         return sig;
     }
 
-    private static string BuildJavaScriptSignature(string name, SymbolKind kind, string paramsText)
+    internal static string BuildJavaScriptSignature(string name, SymbolKind kind, string paramsText, string returnText)
     {
         return kind switch
         {
@@ -370,7 +371,7 @@ public sealed partial class SymbolExtractor
         };
     }
 
-    private static string BuildTypeScriptSignature(string name, SymbolKind kind, string paramsText, string returnText)
+    internal static string BuildTypeScriptSignature(string name, SymbolKind kind, string paramsText, string returnText)
     {
         if (kind == SymbolKind.Class)
             return $"class {name}";
@@ -386,7 +387,7 @@ public sealed partial class SymbolExtractor
         return sig;
     }
 
-    private static string BuildCSharpSignature(string name, SymbolKind kind, string paramsText, string returnText)
+    internal static string BuildCSharpSignature(string name, SymbolKind kind, string paramsText, string returnText)
     {
         if (kind == SymbolKind.Class)
             return $"class {name}";
@@ -400,8 +401,7 @@ public sealed partial class SymbolExtractor
 
     private static Node? TryGetField(Node node, string fieldName)
     {
-        try { return node[fieldName]; }
-        catch (KeyNotFoundException) { return null; }
+        return node.GetChildForField(fieldName);
     }
 
     private static string ExtractDocstring(Node node, LanguageSpec spec)
