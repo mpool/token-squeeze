@@ -116,8 +116,12 @@ rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
 # Windows zip
-(cd "$BIN_DIR/win-x64" && powershell -Command "Compress-Archive -Path 'TokenSqueeze.exe' -DestinationPath '$RELEASE_DIR/TokenSqueeze-win-x64.zip' -Force") 2>/dev/null \
-  || (cd "$BIN_DIR/win-x64" && zip "$RELEASE_DIR/TokenSqueeze-win-x64.zip" TokenSqueeze.exe)
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == mingw* || "$OSTYPE" == cygwin* ]]; then
+  WIN_DEST="$(cygpath -w "$RELEASE_DIR/TokenSqueeze-win-x64.zip")"
+  (cd "$BIN_DIR/win-x64" && powershell -Command "Compress-Archive -Path 'TokenSqueeze.exe' -DestinationPath '$WIN_DEST' -Force")
+else
+  (cd "$BIN_DIR/win-x64" && zip "$RELEASE_DIR/TokenSqueeze-win-x64.zip" TokenSqueeze.exe)
+fi
 
 # macOS tar.gz
 (cd "$BIN_DIR/osx-arm64" && tar -czf "$RELEASE_DIR/TokenSqueeze-osx-arm64.tar.gz" TokenSqueeze)
