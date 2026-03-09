@@ -47,7 +47,8 @@ function runCli(args) {
 const TOOLS = [
   {
     name: "token_squeeze_list",
-    description: "List all indexed projects with symbol counts and languages",
+    description:
+      "List all indexed projects. Use this before outline/extract/find to get project names. Returns project names, file counts, symbol counts, and detected languages.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -57,7 +58,7 @@ const TOOLS = [
   {
     name: "token_squeeze_outline",
     description:
-      "Show symbols (functions, classes, methods, types) in a file from the index",
+      "Get a compact symbol map of a file (classes, functions, methods, signatures) using ~85% fewer tokens than reading the full file. PREFER THIS over the Read tool when you need to understand a file's structure or find specific symbols.",
     inputSchema: {
       type: "object",
       properties: {
@@ -75,7 +76,8 @@ const TOOLS = [
   },
   {
     name: "token_squeeze_extract",
-    description: "Get the full source code of one or more symbols by ID",
+    description:
+      "Extract the full source of specific symbols by ID. Use after outline or find to pull only the exact code you need — far cheaper than reading entire files. PREFER THIS over the Read tool when you need specific function/class/method bodies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -95,7 +97,7 @@ const TOOLS = [
   {
     name: "token_squeeze_find",
     description:
-      "Search symbols by name, signature, or docstring across an indexed project",
+      "Search all symbols across a project by name, signature, or docstring. Returns matching symbol IDs, locations, and signatures. More structured and token-efficient than Grep for finding functions, classes, or methods. PREFER THIS over the Grep tool for symbol-level searches.",
     inputSchema: {
       type: "object",
       properties: {
@@ -214,25 +216,39 @@ function handleRequest(method, params) {
 }
 
 // ---------------------------------------------------------------------------
-// stdio transport — read newline-delimited JSON-RPC from stdin
+// stdio transport — auto-detect framing from first message
+//   Content-Length framed (LSP-style): older MCP clients
+//   Newline-delimited JSON: Claude Code and newer clients
 // ---------------------------------------------------------------------------
 
 let buffer = "";
+let useFraming = null; // null = not yet detected, true = Content-Length, false = newline-delimited
 
 process.stdin.setEncoding("utf-8");
 process.stdin.on("data", (chunk) => {
   buffer += chunk;
 
-  // MCP uses Content-Length framed messages (like LSP)
+  // Auto-detect framing from first chunk
+  if (useFraming === null) {
+    const trimmed = buffer.trimStart();
+    useFraming = trimmed.startsWith("Content-Length");
+  }
+
+  if (useFraming) {
+    parseFramed();
+  } else {
+    parseNewlineDelimited();
+  }
+});
+
+function parseFramed() {
   while (buffer.length > 0) {
-    // Look for Content-Length header
     const headerEnd = buffer.indexOf("\r\n\r\n");
     if (headerEnd === -1) break;
 
     const header = buffer.substring(0, headerEnd);
     const match = header.match(/Content-Length:\s*(\d+)/i);
     if (!match) {
-      // Skip malformed header
       buffer = buffer.substring(headerEnd + 4);
       continue;
     }
@@ -240,19 +256,33 @@ process.stdin.on("data", (chunk) => {
     const contentLength = parseInt(match[1], 10);
     const bodyStart = headerEnd + 4;
 
-    if (buffer.length < bodyStart + contentLength) break; // wait for more data
+    if (buffer.length < bodyStart + contentLength) break;
 
     const body = buffer.substring(bodyStart, bodyStart + contentLength);
     buffer = buffer.substring(bodyStart + contentLength);
 
     try {
-      const msg = JSON.parse(body);
-      processMessage(msg);
+      processMessage(JSON.parse(body));
     } catch (err) {
       console.error("Failed to parse message:", err.message);
     }
   }
-});
+}
+
+function parseNewlineDelimited() {
+  let newlineIdx;
+  while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+    const line = buffer.substring(0, newlineIdx).trim();
+    buffer = buffer.substring(newlineIdx + 1);
+    if (line.length === 0) continue;
+
+    try {
+      processMessage(JSON.parse(line));
+    } catch (err) {
+      console.error("Failed to parse message:", err.message);
+    }
+  }
+}
 
 process.stdin.on("end", () => process.exit(0));
 
@@ -266,7 +296,6 @@ function processMessage(msg) {
   const result = handleRequest(msg.method, msg.params || {});
 
   if (result === undefined) {
-    // Unknown method
     sendResponse(msg.id, null, {
       code: -32601,
       message: `Method not found: ${msg.method}`,
@@ -286,6 +315,9 @@ function sendResponse(id, result, error) {
   }
 
   const body = JSON.stringify(response);
-  const message = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
-  process.stdout.write(message);
+  if (useFraming) {
+    process.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  } else {
+    process.stdout.write(body + "\n");
+  }
 }

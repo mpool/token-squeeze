@@ -19,13 +19,13 @@ Detect the platform and set the binary path:
 
 ## Action
 
-Run:
+The project name argument is required. If not provided, run `<binary> list` and show the user the available projects so they can choose.
+
+Then run:
 
 ```
 <binary> purge <project-name>
 ```
-
-The project name argument is required. If not provided, tell the user to specify one. They can run `/token-squeeze:list` to see available project names.
 
 ## Output
 
