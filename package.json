@@ -1,6 +1,6 @@
 {
   "name": "token-squeeze",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tree-sitter codebase indexing and symbol retrieval plugin for Claude Code",
   "bin": {
     "token-squeeze": "installer/install.js"

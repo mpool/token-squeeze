@@ -1,6 +1,6 @@
 {
   "name": "token-squeeze",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tree-sitter codebase indexing and precision symbol retrieval for Claude Code",
   "author": {
     "name": "Max Pool"
