@@ -2,11 +2,6 @@
 bin/
 obj/
 
-# Allow plugin bin .gitkeep files (actual binaries still ignored)
-!plugin/bin/
-!plugin/bin/*/
-!plugin/bin/**/.gitkeep
-
 # IDE
 .vs/
 *.user
