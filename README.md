@@ -35,6 +35,7 @@ TokenSqueeze gives Claude Code skills to:
 | `/token-squeeze:outline` | Show the symbol tree for a file |
 | `/token-squeeze:extract` | Get the full source of a specific symbol |
 | `/token-squeeze:find` | Search symbols by name, kind, or file path |
+| `/token-squeeze:savings` | Estimate how many tokens were saved this session |
 | `/token-squeeze:purge` | Remove an index |
 
 On session start, the plugin auto-indexes the current directory (if not already indexed).

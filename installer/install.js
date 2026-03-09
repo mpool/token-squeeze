@@ -19,10 +19,15 @@ function getClaudeConfigDir() {
   return path.join(os.homedir(), ".claude");
 }
 
-const PLUGIN_KEY = `${PLUGIN_NAME}@npm`;
+const MARKETPLACE_NAME = "token-squeeze-npm";
+const PLUGIN_KEY = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 
 function getPluginDir(version) {
-  return path.join(getClaudeConfigDir(), "plugins", "cache", "npm", PLUGIN_NAME, version);
+  return path.join(getClaudeConfigDir(), "plugins", "cache", MARKETPLACE_NAME, PLUGIN_NAME, version);
+}
+
+function getMarketplaceDir() {
+  return path.join(getClaudeConfigDir(), "plugins", "marketplaces", MARKETPLACE_NAME);
 }
 
 function getPluginVersion(pluginSrc) {
@@ -123,6 +128,66 @@ async function extractArchive(archivePath, destDir, platform) {
   }
 }
 
+function createMarketplace(pluginVersion) {
+  const marketplaceDir = getMarketplaceDir();
+  const manifestDir = path.join(marketplaceDir, ".claude-plugin");
+  fs.mkdirSync(manifestDir, { recursive: true });
+
+  const marketplace = {
+    "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    name: MARKETPLACE_NAME,
+    metadata: {
+      description: "TokenSqueeze plugin marketplace (installed via npm)",
+      version: "1.0.0",
+    },
+    owner: {
+      name: "Max Pool",
+    },
+    plugins: [
+      {
+        name: PLUGIN_NAME,
+        source: `./plugins/${PLUGIN_NAME}`,
+        description: "Codebase indexing and symbol retrieval for token optimization",
+        version: pluginVersion,
+        author: { name: "Max Pool" },
+        category: "development",
+      },
+    ],
+  };
+
+  fs.writeFileSync(
+    path.join(manifestDir, "marketplace.json"),
+    JSON.stringify(marketplace, null, 2)
+  );
+
+  // Create the plugins/<name> dir as a symlink/copy pointing to the cache
+  // The marketplace needs the plugin source at the relative path declared above
+  const marketplacePluginDir = path.join(marketplaceDir, "plugins", PLUGIN_NAME);
+  fs.mkdirSync(path.join(marketplaceDir, "plugins"), { recursive: true });
+
+  // Remove stale link/dir if present
+  if (fs.existsSync(marketplacePluginDir)) {
+    fs.rmSync(marketplacePluginDir, { recursive: true });
+  }
+
+  // Copy .claude-plugin into marketplace plugin dir so it's discoverable
+  const src = path.join(marketplaceDir, "..", "..", "cache", MARKETPLACE_NAME, PLUGIN_NAME);
+  // We'll create a minimal stub — just needs .claude-plugin/plugin.json
+  const stubManifestDir = path.join(marketplacePluginDir, ".claude-plugin");
+  fs.mkdirSync(stubManifestDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stubManifestDir, "plugin.json"),
+    JSON.stringify({
+      name: PLUGIN_NAME,
+      version: pluginVersion,
+      description: "Codebase indexing and symbol retrieval plugin for Claude Code token optimization",
+      author: { name: "Max Pool" },
+    }, null, 2)
+  );
+
+  console.log("Local marketplace created.");
+}
+
 function registerPlugin(pluginDir, pluginVersion) {
   const configDir = getClaudeConfigDir();
 
@@ -136,6 +201,9 @@ function registerPlugin(pluginDir, pluginVersion) {
       registry = { version: 2, plugins: {} };
     }
   }
+
+  // Remove legacy key if present
+  delete registry.plugins[`${PLUGIN_NAME}@npm`];
 
   const now = new Date().toISOString();
   registry.plugins[PLUGIN_KEY] = [
@@ -162,6 +230,8 @@ function registerPlugin(pluginDir, pluginVersion) {
   if (!settings.enabledPlugins) {
     settings.enabledPlugins = {};
   }
+  // Remove legacy key if present
+  delete settings.enabledPlugins[`${PLUGIN_NAME}@npm`];
   settings.enabledPlugins[PLUGIN_KEY] = true;
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
@@ -185,9 +255,14 @@ async function install() {
   const pluginDir = getPluginDir(pluginVersion);
   console.log(`Installing ${PLUGIN_NAME} v${pluginVersion} to ${pluginDir}`);
 
-  // Clean previous install (this version and legacy location)
-  const legacyDir = path.join(getClaudeConfigDir(), "plugins", PLUGIN_NAME);
-  for (const dir of [pluginDir, legacyDir]) {
+  // Clean previous installs (current version, legacy flat dir, old "npm" cache)
+  const configDir = getClaudeConfigDir();
+  const legacyDirs = [
+    pluginDir,
+    path.join(configDir, "plugins", PLUGIN_NAME),
+    path.join(configDir, "plugins", "cache", "npm", PLUGIN_NAME),
+  ];
+  for (const dir of legacyDirs) {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true });
     }
@@ -244,7 +319,8 @@ async function install() {
     console.error(`  cp plugin/bin/<platform>/* ${path.join(pluginDir, "bin", "<platform>")}/`);
   }
 
-  // Register plugin in Claude Code's installed_plugins.json and enable it
+  // Create local marketplace and register plugin
+  createMarketplace(pluginVersion);
   registerPlugin(pluginDir, pluginVersion);
 
   console.log(`\n${PLUGIN_NAME} installed successfully.`);
