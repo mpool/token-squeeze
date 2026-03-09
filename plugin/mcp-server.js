@@ -49,7 +49,7 @@ function runCli(args) {
 const TOOLS = [
   {
     name: "list_projects",
-    description: "List all indexed projects. Returns name, sourcePath, and indexedAt for each project.",
+    description: "List all indexed projects. Returns name, sourcePath, and indexedAt for each project. Usually not needed — the project name is provided via session settings.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -59,13 +59,13 @@ const TOOLS = [
   {
     name: "read_file_outline",
     description:
-      "Get all symbols (functions, classes, methods, types) in a file with their signatures. Pass project name and file path (e.g. 'src/main.py'). Use after list_projects to get project names.",
+      "Get all symbols (functions, classes, methods, types) in a file with their signatures. Pass project name and file path (e.g. 'src/main.py').",
     inputSchema: {
       type: "object",
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list_projects)",
+          description: "Project name (from session settings or list_projects)",
         },
         file: {
           type: "string",
@@ -85,7 +85,7 @@ const TOOLS = [
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list_projects)",
+          description: "Project name (from session settings or list_projects)",
         },
         ids: {
           type: "array",
@@ -106,7 +106,7 @@ const TOOLS = [
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list_projects)",
+          description: "Project name (from session settings or list_projects)",
         },
         query: {
           type: "string",
