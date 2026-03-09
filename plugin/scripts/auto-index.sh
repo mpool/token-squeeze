@@ -43,24 +43,32 @@ if [[ "$AUTO_REINDEX" == "false" ]]; then
 
   # Check if any project path matches cwd
   if echo "$LIST_OUTPUT" | grep -q "$(printf '%s' "$CWD" | sed 's/[[\.*^$()+?{}|]/\\&/g')"; then
-    # Already indexed, exit silently
-    exit 0
+    # Already indexed
+    INDEXED=true
   fi
 fi
 
-# Run index on cwd
-INDEX_OUTPUT=$("$BINARY" index "$CWD" 2>/dev/null) || {
-  echo "TokenSqueeze: auto-index failed" >&2
-  exit 0
-}
+if [[ "${INDEXED:-}" != "true" ]]; then
+  # Run index on cwd
+  INDEX_OUTPUT=$("$BINARY" index "$CWD" 2>/dev/null) || {
+    echo "TokenSqueeze: auto-index failed" >&2
+    exit 0
+  }
 
-# Parse JSON output for summary
-# Extract filesIndexed and filesUpdated counts if available
-FILES_INDEXED=$(echo "$INDEX_OUTPUT" | grep -o '"filesIndexed"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
-FILES_UPDATED=$(echo "$INDEX_OUTPUT" | grep -o '"filesUpdated"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
+  # Parse JSON output for summary
+  FILES_INDEXED=$(echo "$INDEX_OUTPUT" | grep -o '"filesIndexed"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
+  FILES_UPDATED=$(echo "$INDEX_OUTPUT" | grep -o '"filesUpdated"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
 
-if [[ "$FILES_INDEXED" == "0" && "$FILES_UPDATED" == "0" ]]; then
-  echo "TokenSqueeze: index up to date"
-else
-  echo "TokenSqueeze: indexed ${FILES_INDEXED} files (${FILES_UPDATED} updated)"
+  if [[ "$FILES_INDEXED" != "0" || "$FILES_UPDATED" != "0" ]]; then
+    echo "TokenSqueeze: indexed ${FILES_INDEXED} files (${FILES_UPDATED} updated)" >&2
+  fi
 fi
+
+# Always output tool guidance to stdout (injected into conversation context)
+cat <<'GUIDANCE'
+MANDATORY: When exploring code, use TokenSqueeze MCP tools as your PRIMARY code exploration method for optimal token performance. If you launch codebase-analyzer or explorer agents, instruct them to prefer TokenSqueeze (search_symbols, read_file_outline, read_symbol_source) over Read/Grep for symbol lookups.
+- read_file_outline: get all symbols in a file (replaces reading the full file)
+- search_symbols: find functions/classes/methods by name (replaces grep for symbol searches)
+- read_symbol_source: get the source of a specific symbol by ID (replaces reading entire files for one function)
+Workflow: list_projects → search_symbols / read_file_outline → read_symbol_source
+GUIDANCE

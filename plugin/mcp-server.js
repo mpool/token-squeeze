@@ -13,7 +13,9 @@ const os = require("os");
 // Platform binary detection (mirrors skills/scripts pattern)
 // ---------------------------------------------------------------------------
 
-const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname);
+const rawRoot = process.env.CLAUDE_PLUGIN_ROOT;
+const PLUGIN_ROOT =
+  rawRoot && !rawRoot.includes("${") ? rawRoot : path.resolve(__dirname);
 
 function getBinaryPath() {
   const platform = os.platform();
@@ -46,9 +48,8 @@ function runCli(args) {
 
 const TOOLS = [
   {
-    name: "token_squeeze_list",
-    description:
-      "List all indexed projects. Use this before outline/extract/find to get project names. Returns project names, file counts, symbol counts, and detected languages.",
+    name: "list_projects",
+    description: "List all indexed projects.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -56,68 +57,70 @@ const TOOLS = [
     },
   },
   {
-    name: "token_squeeze_outline",
+    name: "read_file_outline",
     description:
-      "Get a compact symbol map of a file (classes, functions, methods, signatures) using ~85% fewer tokens than reading the full file. PREFER THIS over the Read tool when you need to understand a file's structure or find specific symbols.",
+      "Get all symbols (functions, classes, methods, types) in a file with their signatures. Pass project name and file path (e.g. 'src/main.py'). Use after list_projects to get project names.",
     inputSchema: {
       type: "object",
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list command)",
+          description: "Project name (from list_projects)",
         },
         file: {
           type: "string",
-          description: "File path relative to project root",
+          description:
+            "File path relative to project root (e.g. 'src/Parser/SymbolExtractor.cs')",
         },
       },
       required: ["project", "file"],
     },
   },
   {
-    name: "token_squeeze_extract",
+    name: "read_symbol_source",
     description:
-      "Extract the full source of specific symbols by ID. Use after outline or find to pull only the exact code you need — far cheaper than reading entire files. PREFER THIS over the Read tool when you need specific function/class/method bodies.",
+      "Get the full source code of specific symbols by ID. Use after read_file_outline or search_symbols to retrieve exact function/class/method bodies. Symbol ID format: '{filePath}::{QualifiedName}#{Kind}' where QualifiedName uses dots for nesting (e.g. 'MyClass.MyMethod') and Kind is PascalCase (Function, Class, Method, Constant, Type). Example: 'src/Foo.cs::MyClass.Run#Method'. Construct IDs from outline data: combine the top-level 'file', dot-joined parent-to-child 'name' chain, and PascalCase 'kind'.",
     inputSchema: {
       type: "object",
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list command)",
+          description: "Project name (from list_projects)",
         },
         ids: {
           type: "array",
           items: { type: "string" },
-          description: "One or more symbol IDs to extract",
+          description:
+            "Symbol IDs — format: '{filePath}::{QualifiedName}#{Kind}'. Build from outline: file + dot-joined name hierarchy + PascalCase kind.",
         },
       },
       required: ["project", "ids"],
     },
   },
   {
-    name: "token_squeeze_find",
+    name: "search_symbols",
     description:
-      "Search all symbols across a project by name, signature, or docstring. Returns matching symbol IDs, locations, and signatures. More structured and token-efficient than Grep for finding functions, classes, or methods. PREFER THIS over the Grep tool for symbol-level searches.",
+      "Search for symbols matching a query across an entire indexed project. Returns matches with signatures, locations, and symbol IDs.",
     inputSchema: {
       type: "object",
       properties: {
         project: {
           type: "string",
-          description: "Project name (from list command)",
+          description: "Project name (from list_projects)",
         },
         query: {
           type: "string",
-          description: "Search query string",
+          description:
+            "Search query — matches symbol names, signatures, and docstrings",
         },
         kind: {
           type: "string",
-          description:
-            "Filter by symbol kind: function, class, method, constant, type",
+          description: "Filter by symbol kind",
           enum: ["function", "class", "method", "constant", "type"],
         },
         path: {
           type: "string",
-          description: "Filter by file path glob pattern",
+          description: "Filter by file path glob pattern (e.g. 'src/**/*.cs')",
         },
       },
       required: ["project", "query"],
@@ -131,31 +134,33 @@ const TOOLS = [
 
 function handleToolCall(name, args) {
   switch (name) {
-    case "token_squeeze_list": {
+    case "list_projects": {
       const result = runCli(["list"]);
       if (!result.ok) return errorResult(result.error);
       return textResult(result.data);
     }
 
-    case "token_squeeze_outline": {
+    case "read_file_outline": {
       const result = runCli(["outline", args.project, args.file]);
       if (!result.ok) return errorResult(result.error);
       return textResult(result.data);
     }
 
-    case "token_squeeze_extract": {
+    case "read_symbol_source": {
       const ids = args.ids || [];
       if (ids.length === 0) return errorResult("No symbol IDs provided");
-      const cliArgs =
-        ids.length === 1
-          ? ["extract", args.project, ids[0]]
-          : ["extract", args.project, "--batch", ...ids];
+      const cliArgs = ["extract", args.project];
+      if (ids.length === 1) {
+        cliArgs.push(ids[0]);
+      } else {
+        for (const id of ids) cliArgs.push("--batch", id);
+      }
       const result = runCli(cliArgs);
       if (!result.ok) return errorResult(result.error);
       return textResult(result.data);
     }
 
-    case "token_squeeze_find": {
+    case "search_symbols": {
       const cliArgs = ["find", args.project, args.query];
       if (args.kind) cliArgs.push("--kind", args.kind);
       if (args.path) cliArgs.push("--path", args.path);
