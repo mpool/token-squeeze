@@ -110,6 +110,45 @@ async function extractArchive(archivePath, destDir, platform) {
   }
 }
 
+function registerPlugin(pluginDir) {
+  const registryPath = path.join(getClaudeConfigDir(), "plugins", "installed_plugins.json");
+  const pluginKey = `${PLUGIN_NAME}@npm`;
+
+  let registry = { version: 2, plugins: {} };
+  if (fs.existsSync(registryPath)) {
+    try {
+      registry = JSON.parse(fs.readFileSync(registryPath, "utf-8"));
+    } catch {
+      // Corrupted file — start fresh but preserve version
+      registry = { version: 2, plugins: {} };
+    }
+  }
+
+  // Read version from the plugin manifest we just copied
+  let pluginVersion = "1.0.0";
+  const manifestPath = path.join(pluginDir, ".claude-plugin", "plugin.json");
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      pluginVersion = manifest.version || pluginVersion;
+    } catch { /* use default */ }
+  }
+
+  const now = new Date().toISOString();
+  registry.plugins[pluginKey] = [
+    {
+      scope: "user",
+      installPath: pluginDir,
+      version: pluginVersion,
+      installedAt: now,
+      lastUpdated: now,
+    },
+  ];
+
+  fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  console.log("Plugin registered in Claude Code.");
+}
+
 async function install() {
   const platformKey = getPlatformKey();
   const platformInfo = PLATFORMS[platformKey];
@@ -182,6 +221,9 @@ async function install() {
     console.error("  cd token-squeeze && ./plugin/build.sh");
     console.error(`  cp plugin/bin/<platform>/* ${path.join(pluginDir, "bin", "<platform>")}/`);
   }
+
+  // Register plugin in Claude Code's installed_plugins.json
+  registerPlugin(pluginDir);
 
   console.log(`\n${PLUGIN_NAME} installed successfully.`);
   console.log("Restart Claude Code to activate the plugin.");
