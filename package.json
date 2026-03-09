@@ -11,7 +11,9 @@
     "plugin/skills/",
     "plugin/hooks/",
     "plugin/scripts/",
-    "plugin/settings.json"
+    "plugin/settings.json",
+    "plugin/mcp-server.js",
+    "plugin/.mcp.json"
   ],
   "repository": {
     "type": "git",

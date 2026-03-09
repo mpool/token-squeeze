@@ -26,15 +26,24 @@ Then copy the `plugin/` contents to `~/.claude/plugins/token-squeeze/`.
 
 ## What it does
 
-TokenSqueeze gives Claude Code skills to:
+TokenSqueeze gives Claude Code two interfaces:
+
+### MCP Tools (automatic)
+
+The plugin bundles an MCP server (stdio transport) that Claude calls directly — no slash commands needed:
+
+| Tool | Description |
+|------|-------------|
+| `token_squeeze_list` | List indexed projects with symbol counts and languages |
+| `token_squeeze_outline` | Show symbols in a file (functions, classes, methods, types) |
+| `token_squeeze_extract` | Get the full source of one or more symbols by ID |
+| `token_squeeze_find` | Search symbols by name, signature, or docstring |
+
+### Skills (slash commands)
 
 | Skill | Description |
 |-------|-------------|
-| `/token-squeeze:index` | Index a directory's symbols (functions, classes, methods, types) |
-| `/token-squeeze:list` | List indexed projects |
-| `/token-squeeze:outline` | Show the symbol tree for a file |
-| `/token-squeeze:extract` | Get the full source of a specific symbol |
-| `/token-squeeze:find` | Search symbols by name, kind, or file path |
+| `/token-squeeze:index` | Index a directory's symbols |
 | `/token-squeeze:savings` | Estimate how many tokens were saved this session |
 | `/token-squeeze:purge` | Remove an index |
 

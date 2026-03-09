@@ -185,6 +185,25 @@ function createMarketplace(pluginVersion) {
     }, null, 2)
   );
 
+  // Register in known_marketplaces.json so Claude Code recognizes it
+  const knownPath = path.join(getClaudeConfigDir(), "plugins", "known_marketplaces.json");
+  let known = {};
+  if (fs.existsSync(knownPath)) {
+    try {
+      known = JSON.parse(fs.readFileSync(knownPath, "utf-8"));
+    } catch { /* start fresh */ }
+  }
+
+  known[MARKETPLACE_NAME] = {
+    source: {
+      source: "directory",
+      path: marketplaceDir,
+    },
+    installLocation: marketplaceDir,
+    lastUpdated: new Date().toISOString(),
+  };
+
+  fs.writeFileSync(knownPath, JSON.stringify(known, null, 2));
   console.log("Local marketplace created.");
 }
 
@@ -277,10 +296,13 @@ async function install() {
     }
   }
 
-  // Copy settings.json
-  const settingsSrc = path.join(pluginSrc, "settings.json");
-  if (fs.existsSync(settingsSrc)) {
-    fs.copyFileSync(settingsSrc, path.join(pluginDir, "settings.json"));
+  // Copy root-level plugin files
+  const rootFiles = ["settings.json", "mcp-server.js", ".mcp.json"];
+  for (const file of rootFiles) {
+    const src = path.join(pluginSrc, file);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(pluginDir, file));
+    }
   }
 
   console.log("Plugin files copied.");
@@ -325,12 +347,14 @@ async function install() {
 
   console.log(`\n${PLUGIN_NAME} installed successfully.`);
   console.log("Restart Claude Code to activate the plugin.");
-  console.log("\nAvailable skills:");
+  console.log("\nMCP tools (available automatically):");
+  console.log("  token_squeeze_list      - List indexed projects");
+  console.log("  token_squeeze_outline   - Show symbols in a file");
+  console.log("  token_squeeze_extract   - Get full source of a symbol");
+  console.log("  token_squeeze_find      - Search symbols");
+  console.log("\nSkills (slash commands):");
   console.log("  /token-squeeze:index    - Index a directory");
-  console.log("  /token-squeeze:outline  - Show symbols in a file");
-  console.log("  /token-squeeze:extract  - Get full source of a symbol");
-  console.log("  /token-squeeze:find     - Search symbols");
-  console.log("  /token-squeeze:list     - List indexed projects");
+  console.log("  /token-squeeze:savings  - Estimate token savings");
   console.log("  /token-squeeze:purge    - Remove an index");
 }
 

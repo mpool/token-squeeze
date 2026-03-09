@@ -29,6 +29,8 @@ token-squeeze/
 │   └── token-squeeze.sln
 ├── plugin/                        # Claude Code plugin (installed via npx)
 │   ├── .claude-plugin/            # Plugin manifest
+│   ├── .mcp.json                  # MCP server registration (stdio)
+│   ├── mcp-server.js              # MCP server wrapping CLI binary
 │   ├── skills/                    # Skill definitions
 │   ├── hooks/                     # Hooks (auto-index on session start)
 │   ├── scripts/                   # Hook helper scripts
@@ -103,7 +105,7 @@ Python, JavaScript, TypeScript, C#, C, C++
 
 ## What This Project Does NOT Have
 
-- No MCP server protocol (CLI prefered)
-- No telemetry / token tracking
+- MCP server is a thin stdio wrapper around the CLI (plugin/mcp-server.js, zero dependencies)
+- No telemetry / token tracking (/token-squeeze:savings for savings estimates)
 - No file tree commands (use CLAUDE.md or other artifact)
 - No full-text search commands (Claude has Glob/Grep)
