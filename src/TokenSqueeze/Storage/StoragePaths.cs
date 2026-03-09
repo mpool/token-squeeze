@@ -13,6 +13,10 @@ internal static class StoragePaths
         ".token-squeeze",
         "projects");
 
+    public static string CatalogPath => Path.Combine(
+        Path.GetDirectoryName(RootDir)!,
+        "catalog.json");
+
     public static string GetProjectDir(string projectName)
         => Path.Combine(RootDir, projectName);
 

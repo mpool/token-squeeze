@@ -49,7 +49,7 @@ function runCli(args) {
 const TOOLS = [
   {
     name: "list_projects",
-    description: "List all indexed projects.",
+    description: "List all indexed projects. Returns name, sourcePath, and indexedAt for each project.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -188,7 +188,7 @@ function errorResult(message) {
 
 const SERVER_INFO = {
   name: "token-squeeze",
-  version: "1.1.4",
+  version: "1.2.0",
 };
 
 const CAPABILITIES = {

@@ -82,6 +82,8 @@ internal sealed class IndexStore
         var manifestPath = StoragePaths.GetManifestPath(index.ProjectName);
         AtomicWrite(manifestPath, manifest);
 
+        UpdateCatalog();
+
         // Cleanup orphaned fragments
         if (Directory.Exists(filesDir))
         {
@@ -247,6 +249,19 @@ internal sealed class IndexStore
         return null;
     }
 
+    public ManifestHeader? LoadManifestHeader(string projectName)
+    {
+        var projectDir = StoragePaths.GetProjectDir(projectName);
+        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
+
+        var manifestPath = StoragePaths.GetManifestPath(projectName);
+        if (!File.Exists(manifestPath))
+            return null;
+
+        var json = File.ReadAllText(manifestPath);
+        return JsonSerializer.Deserialize<ManifestHeader>(json, JsonDefaults.Options);
+    }
+
     public List<string> ListProjects()
     {
         if (!Directory.Exists(StoragePaths.RootDir))
@@ -265,6 +280,8 @@ internal sealed class IndexStore
         PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
         if (Directory.Exists(projectDir))
             Directory.Delete(projectDir, recursive: true);
+
+        UpdateCatalog();
     }
 
     public void DeleteFileFragment(string projectName, string storageKey)
@@ -297,6 +314,8 @@ internal sealed class IndexStore
 
         var manifestPath = StoragePaths.GetManifestPath(projectName);
         AtomicWrite(manifestPath, manifest);
+
+        UpdateCatalog();
     }
 
     public void RebuildSearchIndex(string projectName, Manifest manifest)
@@ -380,6 +399,67 @@ internal sealed class IndexStore
     private static SearchSymbol[] ProjectSearchSymbols(IEnumerable<Symbol> symbols)
     {
         return symbols.Select(s => s.ToSearchSymbol()).ToArray();
+    }
+
+    /// <summary>
+    /// Rebuild catalog.json from all project manifests on disk.
+    /// Called after Save, SaveManifest, and Delete to keep the catalog in sync.
+    /// </summary>
+    private void UpdateCatalog()
+    {
+        var projectNames = ListProjects();
+        var projects = new List<object>();
+
+        foreach (var name in projectNames)
+        {
+            var header = LoadManifestHeader(name);
+            if (header is not null)
+            {
+                projects.Add(new
+                {
+                    name = header.ProjectName,
+                    sourcePath = header.SourcePath,
+                    indexedAt = header.IndexedAt
+                });
+            }
+        }
+
+        var json = JsonSerializer.Serialize(new { projects }, JsonDefaults.Options);
+        AtomicWriteRaw(StoragePaths.CatalogPath, json);
+    }
+
+    /// <summary>
+    /// Load catalog.json as a raw JSON string — no deserialization needed by list command.
+    /// Returns null if catalog doesn't exist (will be rebuilt on next index).
+    /// </summary>
+    public string? LoadCatalogJson()
+    {
+        var path = StoragePaths.CatalogPath;
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    internal static void AtomicWriteRaw(string targetPath, string json)
+    {
+        var tempPath = targetPath + $".tmp-{Guid.NewGuid():N}";
+        File.WriteAllText(tempPath, json);
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(tempPath, targetPath, overwrite: true);
+                return;
+            }
+            catch (UnauthorizedAccessException) when (attempt < 5)
+            {
+                Thread.Sleep(attempt * 10);
+            }
+            catch
+            {
+                try { File.Delete(tempPath); } catch { /* best effort */ }
+                throw;
+            }
+        }
     }
 
     internal static void AtomicWrite<T>(string targetPath, T value)

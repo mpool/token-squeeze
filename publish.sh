@@ -137,8 +137,12 @@ node -e "
     pkg.version = '$NEW_VERSION';
     fs.writeFileSync(f, JSON.stringify(pkg, null, 2) + '\n');
   }
+  // Patch MCP server version
+  const mcp = fs.readFileSync('plugin/mcp-server.js', 'utf8');
+  fs.writeFileSync('plugin/mcp-server.js',
+    mcp.replace(/version: \"[^\"]*\"/, 'version: \"$NEW_VERSION\"'));
 "
-echo "  ✓ package.json and plugin.json updated"
+echo "  ✓ package.json, plugin.json, and mcp-server.js updated"
 
 # ── Confirmation ───────────────────────────────────────────────
 echo ""
@@ -160,7 +164,7 @@ fi
 
 # ── Git ────────────────────────────────────────────────────────
 echo "▸ Committing and tagging..."
-git add package.json plugin/.claude-plugin/plugin.json
+git add package.json plugin/.claude-plugin/plugin.json plugin/mcp-server.js
 git commit -m "release: v${NEW_VERSION}"
 git tag -a "$TAG" -m "v${NEW_VERSION}"
 git push origin main --follow-tags

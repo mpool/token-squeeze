@@ -9,6 +9,18 @@ public sealed record Manifest
     public required Dictionary<string, ManifestFileEntry> Files { get; init; }
 }
 
+/// <summary>
+/// Lightweight manifest without Files dictionary — used by list command
+/// to avoid deserializing all file entries.
+/// </summary>
+public sealed record ManifestHeader
+{
+    public required int FormatVersion { get; init; }
+    public required string ProjectName { get; init; }
+    public required string SourcePath { get; init; }
+    public required DateTime IndexedAt { get; init; }
+}
+
 public sealed record ManifestFileEntry
 {
     public required string Path { get; init; }
