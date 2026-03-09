@@ -1,0 +1,4 @@
+plugin/bin/
+.release/
+.planning/
+src/
