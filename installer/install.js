@@ -9,9 +9,9 @@ const PLUGIN_NAME = "token-squeeze";
 const GITHUB_REPO = "mpool/token-squeeze";
 
 const PLATFORMS = {
-  "win32-x64": { asset: "TokenSqueeze-win-x64.zip", binary: "TokenSqueeze.exe" },
-  "darwin-arm64": { asset: "TokenSqueeze-osx-arm64.tar.gz", binary: "TokenSqueeze" },
-  "darwin-x64": { asset: "TokenSqueeze-osx-arm64.tar.gz", binary: "TokenSqueeze" },
+  "win32-x64": { asset: "token-squeeze-win-x64.zip", binary: "token-squeeze.exe" },
+  "darwin-arm64": { asset: "token-squeeze-osx-arm64.tar.gz", binary: "token-squeeze" },
+  "darwin-x64": { asset: "token-squeeze-osx-arm64.tar.gz", binary: "token-squeeze" },
 };
 
 function getClaudeConfigDir() {

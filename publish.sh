@@ -117,14 +117,14 @@ mkdir -p "$RELEASE_DIR"
 
 # Windows zip
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == mingw* || "$OSTYPE" == cygwin* ]]; then
-  WIN_DEST="$(cygpath -w "$RELEASE_DIR/TokenSqueeze-win-x64.zip")"
-  (cd "$BIN_DIR/win-x64" && powershell -Command "Compress-Archive -Path 'TokenSqueeze.exe' -DestinationPath '$WIN_DEST' -Force")
+  WIN_DEST="$(cygpath -w "$RELEASE_DIR/token-squeeze-win-x64.zip")"
+  (cd "$BIN_DIR/win-x64" && powershell -Command "Compress-Archive -Path 'token-squeeze.exe' -DestinationPath '$WIN_DEST' -Force")
 else
-  (cd "$BIN_DIR/win-x64" && zip "$RELEASE_DIR/TokenSqueeze-win-x64.zip" TokenSqueeze.exe)
+  (cd "$BIN_DIR/win-x64" && zip "$RELEASE_DIR/token-squeeze-win-x64.zip" token-squeeze.exe)
 fi
 
 # macOS tar.gz
-(cd "$BIN_DIR/osx-arm64" && tar -czf "$RELEASE_DIR/TokenSqueeze-osx-arm64.tar.gz" TokenSqueeze)
+(cd "$BIN_DIR/osx-arm64" && tar -czf "$RELEASE_DIR/token-squeeze-osx-arm64.tar.gz" token-squeeze)
 
 echo "  ✓ Archives created"
 
@@ -170,8 +170,8 @@ echo "  ✓ Pushed $TAG"
 # ── GitHub Release ─────────────────────────────────────────────
 echo "▸ Creating GitHub release..."
 gh release create "$TAG" \
-  "$RELEASE_DIR/TokenSqueeze-win-x64.zip" \
-  "$RELEASE_DIR/TokenSqueeze-osx-arm64.tar.gz" \
+  "$RELEASE_DIR/token-squeeze-win-x64.zip" \
+  "$RELEASE_DIR/token-squeeze-osx-arm64.tar.gz" \
   --title "v${NEW_VERSION}" \
   --generate-notes
 
