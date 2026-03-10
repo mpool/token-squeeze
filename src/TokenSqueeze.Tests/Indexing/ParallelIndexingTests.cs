@@ -6,27 +6,19 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Indexing;
 
-[Collection("CLI")]
 [Trait("Category", "Phase3")]
 public sealed class ParallelIndexingTests : IDisposable
 {
-    private readonly string _storageDir;
     private readonly LanguageRegistry _registry;
 
     public ParallelIndexingTests()
     {
-        _storageDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-parallel-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(_storageDir);
         _registry = new LanguageRegistry();
-        StoragePaths.TestRootOverride = _storageDir;
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = null;
         _registry.Dispose();
-        if (Directory.Exists(_storageDir))
-            Directory.Delete(_storageDir, recursive: true);
     }
 
     [Fact]
@@ -39,18 +31,16 @@ public sealed class ParallelIndexingTests : IDisposable
 
         for (var i = 0; i < 5; i++)
         {
-            // Fresh storage for each run to avoid incremental skip
-            var runStorageDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-det-" + Guid.NewGuid().ToString("N")[..8]);
-            Directory.CreateDirectory(runStorageDir);
-            StoragePaths.TestRootOverride = runStorageDir;
+            var runCacheDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-det-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(runCacheDir);
 
             try
             {
                 using var registry = new LanguageRegistry();
-                var store = new IndexStore();
+                var store = new IndexStore(runCacheDir);
                 var indexer = new ProjectIndexer(store, registry);
 
-                var result = indexer.Index(fixturesDir, "determinism-test");
+                var result = indexer.Index(fixturesDir);
 
                 var symbolData = result.Index.Symbols.Select(s => new
                 {
@@ -67,15 +57,11 @@ public sealed class ParallelIndexingTests : IDisposable
             }
             finally
             {
-                if (Directory.Exists(runStorageDir))
-                    Directory.Delete(runStorageDir, recursive: true);
+                if (Directory.Exists(runCacheDir))
+                    Directory.Delete(runCacheDir, recursive: true);
             }
         }
 
-        // Restore storage dir for Dispose
-        StoragePaths.TestRootOverride = _storageDir;
-
-        // All 5 runs must produce identical symbol output
         for (var i = 1; i < jsonOutputs.Count; i++)
         {
             Assert.Equal(jsonOutputs[0], jsonOutputs[i]);
@@ -86,29 +72,25 @@ public sealed class ParallelIndexingTests : IDisposable
     public void Index_ErrorIsolation_UnparseableFileDoesNotBlockOtherFiles()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-errisolation-" + Guid.NewGuid().ToString("N")[..8]);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-errisolation-cache-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(cacheDir);
 
         try
         {
-            // Valid Python file with clear symbols
             File.WriteAllText(Path.Combine(tempDir, "valid.py"), "def hello():\n    return 42\n\nclass MyClass:\n    pass\n");
 
-            // Syntactically nonsensical Python (no null bytes so it passes binary filter,
-            // but produces zero extractable symbols). This verifies that a file yielding
-            // no symbols does not interfere with other files being indexed.
             File.WriteAllText(Path.Combine(tempDir, "nonsense.py"),
                 "!@#$%^&*() +=== {{{}}} <<<>>> ~~~ ??? ;;;;\n!@#$%^&*() +=== {{{}}} <<<>>> ~~~ ??? ;;;;\n");
 
-            var store = new IndexStore();
+            var store = new IndexStore(cacheDir);
             var indexer = new ProjectIndexer(store, _registry);
 
-            var result = indexer.Index(tempDir, "error-isolation-test");
+            var result = indexer.Index(tempDir);
 
-            // Valid file symbols must be present regardless of the nonsense file
             Assert.Contains(result.Index.Symbols, s => s.Name == "hello");
             Assert.Contains(result.Index.Symbols, s => s.Name == "MyClass");
 
-            // Both files should be indexed (appear in Files dictionary)
             Assert.True(result.Index.Files.Count >= 2,
                 $"Expected at least 2 indexed files, got {result.Index.Files.Count}");
         }
@@ -116,6 +98,8 @@ public sealed class ParallelIndexingTests : IDisposable
         {
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
         }
     }
 
@@ -125,17 +109,28 @@ public sealed class ParallelIndexingTests : IDisposable
         var fixturesDir = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "Fixtures"));
 
-        var store = new IndexStore();
-        var indexer = new ProjectIndexer(store, _registry);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "tokensqueeze-multilang-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(cacheDir);
 
-        var result = indexer.Index(fixturesDir, "multilang-test");
+        try
+        {
+            var store = new IndexStore(cacheDir);
+            var indexer = new ProjectIndexer(store, _registry);
 
-        var distinctLanguages = result.Index.Symbols
-            .Select(s => s.Language)
-            .Distinct()
-            .ToList();
+            var result = indexer.Index(fixturesDir);
 
-        Assert.True(distinctLanguages.Count >= 3,
-            $"Expected at least 3 distinct languages, got {distinctLanguages.Count}: [{string.Join(", ", distinctLanguages)}]");
+            var distinctLanguages = result.Index.Symbols
+                .Select(s => s.Language)
+                .Distinct()
+                .ToList();
+
+            Assert.True(distinctLanguages.Count >= 3,
+                $"Expected at least 3 distinct languages, got {distinctLanguages.Count}: [{string.Join(", ", distinctLanguages)}]");
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+                Directory.Delete(cacheDir, recursive: true);
+        }
     }
 }

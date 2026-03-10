@@ -4,84 +4,83 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Storage;
 
-[Collection("CLI")]
 public sealed class IndexStoreValidationTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly string? _previousOverride;
+    private readonly string _cacheDir;
     private readonly IndexStore _store;
 
     public IndexStoreValidationTests()
     {
-        _previousOverride = StoragePaths.TestRootOverride;
-        _tempDir = Path.Combine(Path.GetTempPath(), "ts-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        StoragePaths.TestRootOverride = _tempDir;
-        _store = new IndexStore();
+        _cacheDir = Path.Combine(Path.GetTempPath(), "ts-test-" + Guid.NewGuid().ToString("N"));
+        _store = new IndexStore(_cacheDir);
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = _previousOverride;
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (Directory.Exists(_cacheDir))
+            Directory.Delete(_cacheDir, recursive: true);
     }
 
     [Theory]
     [InlineData("../../etc/passwd")]
-    [InlineData("..\\windows\\system32")]
+    [InlineData("..\\..\\windows\\system32")]
     public void SaveFileFragment_RejectsTraversalStorageKey(string storageKey)
     {
         var fragment = new FileSymbolData { File = "test.cs", Symbols = [] };
-        Assert.Throws<SecurityException>(() => _store.SaveFileFragment("valid-project", storageKey, fragment));
+        Assert.Throws<SecurityException>(() => _store.SaveFileFragment(storageKey, fragment));
     }
 
     [Fact]
     public void SaveFileFragment_AcceptsValidStorageKey()
     {
         // Set up required directories so the write can succeed
-        var projectDir = StoragePaths.GetProjectDir("valid-project");
-        var filesDir = StoragePaths.GetFilesDir("valid-project");
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         Directory.CreateDirectory(filesDir);
 
         var fragment = new FileSymbolData { File = "test.cs", Symbols = [] };
-        var ex = Record.Exception(() => _store.SaveFileFragment("valid-project", "src-main-cs", fragment));
+        var ex = Record.Exception(() => _store.SaveFileFragment("src-main-cs", fragment));
         Assert.Null(ex);
     }
 
-    [Theory]
-    [InlineData("../../etc")]
-    [InlineData("..\\windows")]
-    public void RebuildSearchIndex_RejectsTraversalProjectName(string projectName)
+    [Fact]
+    public void RebuildSearchIndex_RejectsTraversalStorageKey()
     {
         var manifest = new Manifest
         {
-            FormatVersion = 2,
-            ProjectName = projectName,
+            FormatVersion = 3,
             SourcePath = "/fake",
             IndexedAt = DateTime.UtcNow,
-            Files = new Dictionary<string, ManifestFileEntry>()
+            Files = new Dictionary<string, ManifestFileEntry>
+            {
+                ["evil.cs"] = new ManifestFileEntry
+                {
+                    Path = "evil.cs",
+                    Hash = "abc",
+                    Language = "C#",
+                    SymbolCount = 1,
+                    StorageKey = "../../escape"
+                }
+            }
         };
 
-        Assert.Throws<SecurityException>(() => _store.RebuildSearchIndex(projectName, manifest));
+        Assert.Throws<SecurityException>(() => _store.RebuildSearchIndex(manifest));
     }
 
     [Fact]
-    public void RebuildSearchIndex_AcceptsValidProjectName()
+    public void RebuildSearchIndex_AcceptsValidManifest()
     {
-        var projectDir = StoragePaths.GetProjectDir("valid-project");
-        Directory.CreateDirectory(projectDir);
+        // RebuildSearchIndex writes to disk, so directory must exist
+        Directory.CreateDirectory(_cacheDir);
 
         var manifest = new Manifest
         {
-            FormatVersion = 2,
-            ProjectName = "valid-project",
+            FormatVersion = 3,
             SourcePath = "/fake",
             IndexedAt = DateTime.UtcNow,
             Files = new Dictionary<string, ManifestFileEntry>()
         };
 
-        var ex = Record.Exception(() => _store.RebuildSearchIndex("valid-project", manifest));
+        var ex = Record.Exception(() => _store.RebuildSearchIndex(manifest));
         Assert.Null(ex);
     }
 }

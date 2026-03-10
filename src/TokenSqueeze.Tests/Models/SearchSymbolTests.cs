@@ -6,34 +6,27 @@ using TokenSqueeze.Tests.Helpers;
 
 namespace TokenSqueeze.Tests.Models;
 
-[Collection("CLI")]
 [Trait("Category", "Phase2")]
 public sealed class SearchSymbolTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly string? _previousOverride;
+    private readonly string _cacheDir;
     private readonly IndexStore _store;
 
     public SearchSymbolTests()
     {
-        _previousOverride = StoragePaths.TestRootOverride;
-        _tempDir = Path.Combine(Path.GetTempPath(), "ts-searchsym-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        StoragePaths.TestRootOverride = _tempDir;
-        _store = new IndexStore();
+        _cacheDir = Path.Combine(Path.GetTempPath(), "ts-searchsym-" + Guid.NewGuid().ToString("N"));
+        _store = new IndexStore(_cacheDir);
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = _previousOverride;
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (Directory.Exists(_cacheDir))
+            Directory.Delete(_cacheDir, recursive: true);
     }
 
     [Fact]
     public void SearchSymbolHasNoByteOffsetField()
     {
-        // SearchSymbol record must not have ByteOffset, ByteLength, or ContentHash
         var type = typeof(SearchSymbol);
         Assert.Null(type.GetProperty("ByteOffset"));
         Assert.Null(type.GetProperty("ByteLength"));
@@ -81,11 +74,11 @@ public sealed class SearchSymbolTests : IDisposable
     [Fact]
     public void LoadAllSymbolsReturnsSearchSymbolType()
     {
-        var index = TestIndexBuilder.Create("searchsymtest", "/tmp/searchsymtest",
+        var index = TestIndexBuilder.Create("/tmp/searchsymtest",
             TestIndexBuilder.MakeSymbol("Bar", file: "b.py"));
         _store.Save(index);
 
-        var result = _store.LoadAllSymbols("searchsymtest");
+        var result = _store.LoadAllSymbols();
 
         Assert.NotNull(result);
         Assert.IsType<List<SearchSymbol>>(result);
@@ -96,19 +89,17 @@ public sealed class SearchSymbolTests : IDisposable
     [Fact]
     public void SearchIndexJsonLacksByteFields()
     {
-        var index = TestIndexBuilder.Create("searchjsontest", "/tmp/searchjsontest",
+        var index = TestIndexBuilder.Create("/tmp/searchjsontest",
             TestIndexBuilder.MakeSymbol("Baz", file: "c.py"));
         _store.Save(index);
 
-        var searchIndexPath = StoragePaths.GetSearchIndexPath("searchjsontest");
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         var json = File.ReadAllText(searchIndexPath);
 
-        // The JSON should NOT contain byteOffset or byteLength or contentHash
         Assert.DoesNotContain("byteOffset", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("byteLength", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("contentHash", json, StringComparison.OrdinalIgnoreCase);
 
-        // But should contain scoring fields
         Assert.Contains("\"name\"", json);
         Assert.Contains("\"signature\"", json);
     }

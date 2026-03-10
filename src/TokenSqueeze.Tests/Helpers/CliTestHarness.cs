@@ -7,7 +7,6 @@ using Spectre.Console.Cli;
 using TokenSqueeze.Commands;
 using TokenSqueeze.Infrastructure;
 using TokenSqueeze.Parser;
-using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Helpers;
 
@@ -26,20 +25,27 @@ public sealed class CliTestHarness : IDisposable
         _tempRoot = Path.Combine(Path.GetTempPath(), $"ts-test-{Guid.NewGuid():N}");
         StorageDir = Path.Combine(_tempRoot, "storage");
         Directory.CreateDirectory(StorageDir);
-        StoragePaths.TestRootOverride = StorageDir;
         _originalOut = Console.Out;
     }
 
     public (int exitCode, string output) Run(params string[] args)
     {
+        return RunInDir(null, args);
+    }
+
+    public (int exitCode, string output) RunInDir(string? workingDir, params string[] args)
+    {
         var writer = new StringWriter();
+        var previousDir = Directory.GetCurrentDirectory();
         try
         {
             Console.SetOut(writer);
 
+            if (workingDir is not null)
+                Directory.SetCurrentDirectory(workingDir);
+
             var services = new ServiceCollection();
             services.AddSingleton<LanguageRegistry>();
-            services.AddSingleton<IndexStore>();
             var registrar = new TypeRegistrar(services);
 
             var app = new CommandApp(registrar);
@@ -47,8 +53,6 @@ public sealed class CliTestHarness : IDisposable
             {
                 config.SetApplicationName("token-squeeze");
                 config.AddCommand<IndexCommand>("index");
-                config.AddCommand<ListCommand>("list");
-                config.AddCommand<PurgeCommand>("purge");
                 config.AddCommand<OutlineCommand>("outline");
                 config.AddCommand<ExtractCommand>("extract");
                 config.AddCommand<FindCommand>("find");
@@ -61,6 +65,7 @@ public sealed class CliTestHarness : IDisposable
         }
         finally
         {
+            Directory.SetCurrentDirectory(previousDir);
             Console.SetOut(_originalOut);
         }
     }
@@ -81,7 +86,6 @@ public sealed class CliTestHarness : IDisposable
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = null;
         Console.SetOut(_originalOut);
         try
         {

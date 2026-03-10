@@ -33,7 +33,7 @@ internal sealed class IncrementalReindexer
         // Track all affected files for incremental search index update
         var affectedFiles = new HashSet<string>(StringComparer.Ordinal);
 
-        // Handle deleted files first — cheap operations, share the global budget
+        // Handle deleted files first -- cheap operations, share the global budget
         var deletedCount = Math.Min(result.DeletedFiles.Count, MaxReindexPerQuery);
 
         foreach (var relativePath in result.DeletedFiles.Take(deletedCount))
@@ -42,7 +42,7 @@ internal sealed class IncrementalReindexer
             affectedFiles.Add(relativePath);
             if (manifest.Files.TryGetValue(relativePath, out var entry))
             {
-                _store.DeleteFileFragment(manifest.ProjectName, entry.StorageKey);
+                _store.DeleteFileFragment(entry.StorageKey);
                 manifest.Files.Remove(relativePath);
             }
         }
@@ -96,7 +96,7 @@ internal sealed class IncrementalReindexer
                     Symbols = symbols
                 };
 
-                _store.SaveFileFragment(manifest.ProjectName, storageKey, fragment);
+                _store.SaveFileFragment(storageKey, fragment);
                 affectedFiles.Add(relativePath);
 
                 manifest.Files[relativePath] = new ManifestFileEntry
@@ -159,7 +159,7 @@ internal sealed class IncrementalReindexer
                     Symbols = symbols
                 };
 
-                _store.SaveFileFragment(manifest.ProjectName, storageKey, fragment);
+                _store.SaveFileFragment(storageKey, fragment);
                 affectedFiles.Add(relativePath);
 
                 manifest.Files[relativePath] = new ManifestFileEntry
@@ -178,7 +178,7 @@ internal sealed class IncrementalReindexer
             }
         }
 
-        _store.UpdateSearchIndex(manifest.ProjectName, manifest, affectedFiles);
+        _store.UpdateSearchIndex(manifest, affectedFiles);
 
         return manifest;
     }

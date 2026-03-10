@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using System.Text.RegularExpressions;
 using TokenSqueeze.Models;
 using TokenSqueeze.Parser;
 using TokenSqueeze.Storage;
@@ -20,13 +19,12 @@ internal sealed class ProjectIndexer
         _registry = registry;
     }
 
-    public IndexResult Index(string directoryPath, string? projectName = null)
+    public IndexResult Index(string directoryPath)
     {
         var fullPath = Path.GetFullPath(directoryPath);
-        var name = ResolveProjectName(fullPath, projectName);
 
         // Load existing index for incremental comparison
-        var existing = _store.Load(name);
+        var existing = _store.Load();
         var existingFiles = existing?.Files ?? new Dictionary<string, IndexedFile>();
         var existingSymbolsByFile = existing?.Symbols
             .GroupBy(s => s.File)
@@ -118,7 +116,6 @@ internal sealed class ProjectIndexer
 
         var index = new CodeIndex
         {
-            ProjectName = name,
             SourcePath = fullPath,
             IndexedAt = DateTime.UtcNow,
             Files = allFiles,
@@ -128,45 +125,9 @@ internal sealed class ProjectIndexer
         _store.Save(index);
 
         var errorSuffix = errorCount > 0 ? $", {errorCount} errors" : "";
-        Console.Error.WriteLine($"Indexed {name}: {walkedFiles.Count} files scanned, {filesParsed} parsed, {filesSkipped} unchanged, {allSymbols.Count} symbols{errorSuffix}");
+        Console.Error.WriteLine($"Indexed: {walkedFiles.Count} files scanned, {filesParsed} parsed, {filesSkipped} unchanged, {allSymbols.Count} symbols{errorSuffix}");
 
         return new IndexResult(index, errorCount);
-    }
-
-    internal static string SanitizeName(string rawName)
-    {
-        // Replace any character that isn't alphanumeric, hyphen, underscore, or dot
-        var sanitized = Regex.Replace(rawName, @"[^a-zA-Z0-9\-_.]", "-");
-        // Collapse repeated hyphens
-        sanitized = Regex.Replace(sanitized, @"-{2,}", "-");
-        // Trim leading/trailing hyphens and dots (prevents .. traversal and leading-dot hiding)
-        sanitized = sanitized.Trim('-', '.');
-        // Return "unnamed" if result is empty
-        return string.IsNullOrEmpty(sanitized) ? "unnamed" : sanitized;
-    }
-
-    private string ResolveProjectName(string fullPath, string? explicitName)
-    {
-        var baseName = SanitizeName(explicitName ?? Path.GetFileName(fullPath));
-        if (string.IsNullOrEmpty(baseName))
-            baseName = "unnamed";
-
-        var candidate = baseName;
-        var suffix = 2;
-
-        while (true)
-        {
-            var manifest = _store.LoadManifest(candidate);
-            if (manifest is null)
-                return candidate;
-
-            // Same source path means same project -- reuse name
-            if (string.Equals(manifest.SourcePath, fullPath, StringComparison.OrdinalIgnoreCase))
-                return candidate;
-
-            candidate = $"{baseName}-{suffix}";
-            suffix++;
-        }
     }
 
     private static string ComputeFileHash(byte[] fileBytes)

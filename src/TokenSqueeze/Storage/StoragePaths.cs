@@ -5,43 +5,17 @@ namespace TokenSqueeze.Storage;
 
 internal static class StoragePaths
 {
-    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    internal static string? TestRootOverride;
+    public static string GetManifestPath(string cacheDir)
+        => Path.Combine(cacheDir, "manifest.json");
 
-    public static string RootDir => TestRootOverride ?? Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".token-squeeze",
-        "projects");
+    public static string GetFilesDir(string cacheDir)
+        => Path.Combine(cacheDir, "files");
 
-    public static string CatalogPath => Path.Combine(
-        Path.GetDirectoryName(RootDir)!,
-        "catalog.json");
+    public static string GetFileFragmentPath(string cacheDir, string storageKey)
+        => Path.Combine(GetFilesDir(cacheDir), storageKey + ".json");
 
-    public static string GetProjectDir(string projectName)
-        => Path.Combine(RootDir, projectName);
-
-    /// <summary>
-    /// Returns the path to the old monolithic index.json format.
-    /// Used only for legacy detection, migration, and cleanup.
-    /// Current format uses manifest.json + search-index.json + per-file fragments.
-    /// </summary>
-    public static string GetLegacyIndexPath(string projectName)
-        => Path.Combine(GetProjectDir(projectName), "index.json");
-
-    public static string GetMetadataPath(string projectName)
-        => Path.Combine(GetProjectDir(projectName), "metadata.json");
-
-    public static string GetManifestPath(string projectName)
-        => Path.Combine(GetProjectDir(projectName), "manifest.json");
-
-    public static string GetFilesDir(string projectName)
-        => Path.Combine(GetProjectDir(projectName), "files");
-
-    public static string GetFileFragmentPath(string projectName, string storageKey)
-        => Path.Combine(GetFilesDir(projectName), storageKey + ".json");
-
-    public static string GetSearchIndexPath(string projectName)
-        => Path.Combine(GetProjectDir(projectName), "search-index.json");
+    public static string GetSearchIndexPath(string cacheDir)
+        => Path.Combine(cacheDir, "search-index.json");
 
     private const int MaxStorageKeyLength = 200;
 
@@ -65,7 +39,4 @@ internal static class StoragePaths
 
         return key;
     }
-
-    public static void EnsureRootExists()
-        => Directory.CreateDirectory(RootDir);
 }

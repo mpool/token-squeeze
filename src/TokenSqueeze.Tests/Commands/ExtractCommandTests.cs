@@ -10,19 +10,17 @@ public sealed class ExtractCommandTests : IDisposable
 {
     private readonly CliTestHarness _harness = new();
 
-    private (string projectName, string sourceDir) IndexPythonProject(string name, Dictionary<string, string> files)
+    private (string sourceDir, string sourceDir2) IndexPythonProject(string name, Dictionary<string, string> files)
     {
         var sourceDir = _harness.CreateSourceDir(name, files);
         var (exitCode, output) = _harness.Run("index", sourceDir);
         Assert.Equal(0, exitCode);
-        using var doc = JsonDocument.Parse(output);
-        var projectName = doc.RootElement.GetProperty("projectName").GetString()!;
-        return (projectName, sourceDir);
+        return (sourceDir, sourceDir);
     }
 
-    private string FindSymbolId(string projectName, string symbolName)
+    private string FindSymbolId(string sourceDir, string symbolName)
     {
-        var (exitCode, output) = _harness.Run("find", projectName, symbolName);
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "find", symbolName);
         Assert.Equal(0, exitCode);
         using var doc = JsonDocument.Parse(output);
         var results = doc.RootElement.GetProperty("results");
@@ -38,13 +36,13 @@ public sealed class ExtractCommandTests : IDisposable
     public void ByteOffsetExtraction_ReturnsCorrectSource()
     {
         var source = "def greet(name):\n    return f\"Hello {name}\"\n";
-        var (projectName, _) = IndexPythonProject("extract-byte", new Dictionary<string, string>
+        var (sourceDir, _) = IndexPythonProject("extract-byte", new Dictionary<string, string>
         {
             ["hello.py"] = source
         });
 
-        var symbolId = FindSymbolId(projectName, "greet");
-        var (exitCode, output) = _harness.Run("extract", projectName, symbolId);
+        var symbolId = FindSymbolId(sourceDir, "greet");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", symbolId);
 
         Assert.Equal(0, exitCode);
         using var doc = JsonDocument.Parse(output);
@@ -56,18 +54,16 @@ public sealed class ExtractCommandTests : IDisposable
     [Fact]
     public void AutoReindex_ReturnsUpdatedSource_NoStaleFlag()
     {
-        var (projectName, sourceDir) = IndexPythonProject("extract-stale", new Dictionary<string, string>
+        var (sourceDir, _) = IndexPythonProject("extract-stale", new Dictionary<string, string>
         {
             ["app.py"] = "def greet(name):\n    return f\"Hello {name}\"\n"
         });
 
-        // Modify the file -- auto-reindex should pick up the change
         Thread.Sleep(50);
         File.WriteAllText(Path.Combine(sourceDir, "app.py"), "def greet(name):\n    return f\"Hiya {name}\"\n");
 
-        // Extract should auto-reindex and return updated source without stale/warning
-        var symbolId = FindSymbolId(projectName, "greet");
-        var (exitCode, output) = _harness.Run("extract", projectName, symbolId);
+        var symbolId = FindSymbolId(sourceDir, "greet");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", symbolId);
 
         Assert.Equal(0, exitCode);
         using var doc = JsonDocument.Parse(output);
@@ -81,15 +77,15 @@ public sealed class ExtractCommandTests : IDisposable
     [Fact]
     public void BatchMode_ReturnsMultipleSymbols()
     {
-        var (projectName, _) = IndexPythonProject("extract-batch", new Dictionary<string, string>
+        var (sourceDir, _) = IndexPythonProject("extract-batch", new Dictionary<string, string>
         {
             ["funcs.py"] = "def alpha():\n    pass\n\ndef beta():\n    pass\n"
         });
 
-        var alphaId = FindSymbolId(projectName, "alpha");
-        var betaId = FindSymbolId(projectName, "beta");
+        var alphaId = FindSymbolId(sourceDir, "alpha");
+        var betaId = FindSymbolId(sourceDir, "beta");
 
-        var (exitCode, output) = _harness.Run("extract", projectName, "--batch", alphaId, "--batch", betaId);
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", "--batch", alphaId, "--batch", betaId);
 
         Assert.Equal(0, exitCode);
         using var doc = JsonDocument.Parse(output);
@@ -108,14 +104,13 @@ public sealed class ExtractCommandTests : IDisposable
     [Fact]
     public void MissingSymbol_ReturnsError()
     {
-        var (projectName, _) = IndexPythonProject("extract-missing-sym", new Dictionary<string, string>
+        var (sourceDir, _) = IndexPythonProject("extract-missing-sym", new Dictionary<string, string>
         {
             ["hello.py"] = "def greet(name):\n    pass\n"
         });
 
-        var (exitCode, output) = _harness.Run("extract", projectName, "nonexistent::fake#Function");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", "nonexistent::fake#Function");
 
-        // ExtractCommand returns 0 even for missing symbols (it includes error in result JSON)
         using var doc = JsonDocument.Parse(output);
         var root = doc.RootElement;
         Assert.True(root.TryGetProperty("error", out var errorProp), "Expected error property for missing symbol");
@@ -125,23 +120,20 @@ public sealed class ExtractCommandTests : IDisposable
     [Fact]
     public void MissingSourceFile_ReturnsError()
     {
-        var (projectName, sourceDir) = IndexPythonProject("extract-missing-file", new Dictionary<string, string>
+        var (sourceDir, _) = IndexPythonProject("extract-missing-file", new Dictionary<string, string>
         {
             ["temp.py"] = "def ephemeral():\n    pass\n"
         });
 
-        var symbolId = FindSymbolId(projectName, "ephemeral");
+        var symbolId = FindSymbolId(sourceDir, "ephemeral");
 
-        // Delete the source file after indexing
         File.Delete(Path.Combine(sourceDir, "temp.py"));
 
-        var (exitCode, output) = _harness.Run("extract", projectName, symbolId);
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", symbolId);
 
         using var doc = JsonDocument.Parse(output);
         var root = doc.RootElement;
         Assert.True(root.TryGetProperty("error", out var errorProp), "Expected error for missing source file");
-        // After BUG-01 fix, EnsureFresh purges deleted files from manifest,
-        // so the symbol is gone entirely (not "source file not found")
         Assert.Equal("Symbol not found", errorProp.GetString());
     }
 

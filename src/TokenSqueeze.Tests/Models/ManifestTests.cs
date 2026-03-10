@@ -9,15 +9,14 @@ public sealed class ManifestTests
     {
         var manifest = new Manifest
         {
-            FormatVersion = 2,
-            ProjectName = "test",
+            FormatVersion = 3,
             SourcePath = "/tmp/test",
             IndexedAt = DateTime.UtcNow,
             Files = new Dictionary<string, ManifestFileEntry>()
         };
 
-        Assert.Equal(2, manifest.FormatVersion);
-        Assert.Equal("test", manifest.ProjectName);
+        Assert.Equal(3, manifest.FormatVersion);
+        Assert.Equal("/tmp/test", manifest.SourcePath);
         Assert.NotNull(manifest.Files);
     }
 

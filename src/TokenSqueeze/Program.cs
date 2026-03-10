@@ -3,11 +3,9 @@ using Spectre.Console.Cli;
 using TokenSqueeze.Commands;
 using TokenSqueeze.Infrastructure;
 using TokenSqueeze.Parser;
-using TokenSqueeze.Storage;
 
 var services = new ServiceCollection();
 services.AddSingleton<LanguageRegistry>();
-services.AddSingleton<IndexStore>();
 var registrar = new TypeRegistrar(services);
 
 var app = new CommandApp(registrar);
@@ -17,10 +15,6 @@ app.Configure(config =>
 
     config.AddCommand<IndexCommand>("index")
         .WithDescription("Index a local folder");
-    config.AddCommand<ListCommand>("list")
-        .WithDescription("List indexed folders");
-    config.AddCommand<PurgeCommand>("purge")
-        .WithDescription("Delete index for a folder");
     config.AddCommand<OutlineCommand>("outline")
         .WithDescription("Show symbols in a file");
     config.AddCommand<ExtractCommand>("extract")

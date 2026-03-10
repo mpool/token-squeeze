@@ -8,15 +8,11 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class FindCommand(IndexStore store, LanguageRegistry registry) : Command<FindCommand.Settings>
+internal sealed class FindCommand(LanguageRegistry registry) : Command<FindCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
-        [CommandArgument(0, "<name>")]
-        [Description("The name of the indexed folder")]
-        public string Name { get; init; } = string.Empty;
-
-        [CommandArgument(1, "<query>")]
+        [CommandArgument(0, "<query>")]
         [Description("The search query")]
         public string Query { get; init; } = string.Empty;
 
@@ -38,21 +34,20 @@ internal sealed class FindCommand(IndexStore store, LanguageRegistry registry) :
     {
         try
         {
-        // Legacy migration
-        if (LegacyMigration.TryMigrateIfNeeded(settings.Name, store, registry, out var migrationError))
+        var cacheDir = Path.Combine(Directory.GetCurrentDirectory(), ".cache");
+        if (!Directory.Exists(cacheDir))
         {
-            if (migrationError is not null)
-            {
-                JsonOutput.WriteError(migrationError);
-                return 1;
-            }
+            JsonOutput.WriteError("No index found. Run /token-squeeze:index");
+            return 1;
         }
 
-        var manifest = QueryReindexer.EnsureFresh(settings.Name, store, registry, cancellation);
-        var symbols = store.LoadAllSymbols(settings.Name);
+        var store = new IndexStore(cacheDir);
+
+        var manifest = QueryReindexer.EnsureFresh(store, registry, cancellation);
+        var symbols = store.LoadAllSymbols();
         if (manifest is null || symbols is null)
         {
-            JsonOutput.WriteError($"Project not found: {settings.Name}");
+            JsonOutput.WriteError("No index found. Run /token-squeeze:index");
             return 1;
         }
 
