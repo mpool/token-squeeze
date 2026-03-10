@@ -34,4 +34,4 @@ The command outputs JSON. Present a summary to the user showing:
 - Languages detected
 - Cache location
 
-Then offer: "Want me to add `.cache/` to your `.gitignore`?"
+Then check the project's `.gitignore` file (if it exists) to see whether `.cache/` is already covered — either by a literal `.cache/` entry or by a broader pattern like `*.Cache` or similar. Only offer to add `.cache/` to `.gitignore` if it is NOT already covered.
