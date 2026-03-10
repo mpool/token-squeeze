@@ -182,7 +182,7 @@ function noIndexResult(toolName) {
 
 const SERVER_INFO = {
   name: "token-squeeze",
-  version: "3.0.3",
+  version: "3.0.4",
 };
 
 const CAPABILITIES = {
