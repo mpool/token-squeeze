@@ -14,6 +14,9 @@ obj/
 .release/
 node_modules/
 
+# Token-squeeze cache
+.cache/
+
 # OS
 Thumbs.db
 Desktop.ini

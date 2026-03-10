@@ -10,9 +10,13 @@ You are exploring a codebase using token-squeeze for token-efficient symbol retr
 
 ## Your job is to DOCUMENT what exists — not critique, improve, or recommend changes.
 
-## Step 1 — Validate Index
+## Step 1 — Validate Index (MUST complete before any other tool calls)
 
-Use `search_symbols` with a broad query (e.g. the user's topic) to confirm an index exists. If the MCP server returns "No index found", tell the user to run `/token-squeeze:index` first and stop.
+Call `search_symbols` with a broad query (e.g. the user's topic) FIRST — as a single, standalone call. Do NOT call `read_file_outline` or `read_symbol_source` in parallel with this initial call.
+
+If the response contains `"hint"` mentioning "No index exists", tell the user to run `/token-squeeze:index` first and **stop — do not proceed to further steps**.
+
+Only after `search_symbols` returns actual results should you continue to Step 2.
 
 ## Step 2 — Understand the Question
 

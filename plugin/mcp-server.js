@@ -52,7 +52,7 @@ const TOOLS = [
   {
     name: "read_file_outline",
     description:
-      "Get all symbols (functions, classes, methods, types) in a file with their signatures. Pass file path (e.g. 'src/main.py').",
+      "Get all symbols (functions, classes, methods, types) in a file with their signatures — without reading the full file. Uses ~90% fewer tokens than the Read tool. Prefer this over Read when you need to understand what a file contains, how it's structured, or when exploring unfamiliar code. Start here before reaching for Read.",
     inputSchema: {
       type: "object",
       properties: {
@@ -68,7 +68,7 @@ const TOOLS = [
   {
     name: "read_symbol_source",
     description:
-      "Get the full source code of specific symbols by ID. Use after read_file_outline or search_symbols to retrieve exact function/class/method bodies. Symbol ID format: '{filePath}::{QualifiedName}#{Kind}' where QualifiedName uses dots for nesting (e.g. 'MyClass.MyMethod') and Kind is PascalCase (Function, Class, Method, Constant, Type). Example: 'src/Foo.cs::MyClass.Run#Method'. Construct IDs from outline data: combine the top-level 'file', dot-joined parent-to-child 'name' chain, and PascalCase 'kind'.",
+      "Get the full source code of specific symbols by ID — reads only the exact symbol bodies you need, not entire files. Prefer this over Read when you need specific function/class/method implementations. Use after read_file_outline or search_symbols to retrieve bodies. Symbol ID format: '{filePath}::{QualifiedName}#{Kind}' where QualifiedName uses dots for nesting (e.g. 'MyClass.MyMethod') and Kind is PascalCase (Function, Class, Method, Constant, Type). Example: 'src/Foo.cs::MyClass.Run#Method'. Construct IDs from outline data: combine the top-level 'file', dot-joined parent-to-child 'name' chain, and PascalCase 'kind'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,7 +85,7 @@ const TOOLS = [
   {
     name: "search_symbols",
     description:
-      "Search for symbols matching a query across the indexed codebase. Returns matches with signatures, locations, and symbol IDs.",
+      "Search for symbols matching a query across the indexed codebase. More targeted than Grep — returns matching symbols with signatures, locations, and IDs ready for read_symbol_source. Prefer this over Grep when searching for functions, classes, or methods, or when exploring how code is structured or how components connect.",
     inputSchema: {
       type: "object",
       properties: {
@@ -116,7 +116,7 @@ const TOOLS = [
 function handleToolCall(name, args) {
   const manifestPath = path.join(process.cwd(), ".cache", "manifest.json");
   if (!fs.existsSync(manifestPath)) {
-    return errorResult("No index found. Run /token-squeeze:index");
+    return noIndexResult(name);
   }
 
   switch (name) {
@@ -160,6 +160,20 @@ function textResult(text) {
 
 function errorResult(message) {
   return { content: [{ type: "text", text: message }], isError: true };
+}
+
+function noIndexResult(toolName) {
+  const hint = "No index exists yet. Run /token-squeeze:index to build one.";
+  switch (toolName) {
+    case "search_symbols":
+      return textResult(JSON.stringify({ symbols: [], hint }));
+    case "read_file_outline":
+      return textResult(JSON.stringify({ file: null, symbols: [], hint }));
+    case "read_symbol_source":
+      return textResult(JSON.stringify({ symbols: [], hint }));
+    default:
+      return textResult(JSON.stringify({ hint }));
+  }
 }
 
 // ---------------------------------------------------------------------------
