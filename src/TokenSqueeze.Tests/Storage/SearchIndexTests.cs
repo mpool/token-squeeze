@@ -6,31 +6,25 @@ using TokenSqueeze.Tests.Helpers;
 
 namespace TokenSqueeze.Tests.Storage;
 
-[Collection("CLI")]
 [Trait("Category", "Phase3")]
 public sealed class SearchIndexTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly string? _previousOverride;
+    private readonly string _cacheDir;
     private readonly IndexStore _store;
 
     public SearchIndexTests()
     {
-        _previousOverride = StoragePaths.TestRootOverride;
-        _tempDir = Path.Combine(Path.GetTempPath(), "ts-searchidx-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        StoragePaths.TestRootOverride = _tempDir;
-        _store = new IndexStore();
+        _cacheDir = Path.Combine(Path.GetTempPath(), "ts-searchidx-" + Guid.NewGuid().ToString("N"));
+        _store = new IndexStore(_cacheDir);
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = _previousOverride;
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (Directory.Exists(_cacheDir))
+            Directory.Delete(_cacheDir, recursive: true);
     }
 
-    private static CodeIndex CreateTestIndex(string projectName = "searchtest")
+    private static CodeIndex CreateTestIndex()
     {
         var symbols = new List<Symbol>
         {
@@ -56,8 +50,7 @@ public sealed class SearchIndexTests : IDisposable
 
         return new CodeIndex
         {
-            ProjectName = projectName,
-            SourcePath = "/tmp/" + projectName,
+            SourcePath = "/tmp/searchtest",
             IndexedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             Files = files,
             Symbols = symbols
@@ -67,12 +60,10 @@ public sealed class SearchIndexTests : IDisposable
     [Fact]
     public void SearchIndexCreatedAtIndexTime()
     {
-        // Arrange & Act
         var index = CreateTestIndex();
         _store.Save(index);
 
-        // Assert: search-index.json must exist at the expected path
-        var searchIndexPath = StoragePaths.GetSearchIndexPath("searchtest");
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         Assert.True(File.Exists(searchIndexPath),
             "search-index.json should be created when indexing a project");
     }
@@ -80,16 +71,13 @@ public sealed class SearchIndexTests : IDisposable
     [Fact]
     public void SearchIndexContainsScoringFields()
     {
-        // Arrange & Act
         var index = CreateTestIndex();
         _store.Save(index);
 
-        // Read search-index.json directly and deserialize
-        var searchIndexPath = StoragePaths.GetSearchIndexPath("searchtest");
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         var json = File.ReadAllText(searchIndexPath);
         var symbols = JsonSerializer.Deserialize<List<Symbol>>(json, JsonDefaults.Options);
 
-        // Assert: all symbols have scoring-relevant fields
         Assert.NotNull(symbols);
         Assert.Equal(3, symbols.Count);
 
@@ -100,19 +88,16 @@ public sealed class SearchIndexTests : IDisposable
             Assert.True(Enum.IsDefined(sym.Kind), "Kind must be a valid SymbolKind");
         }
 
-        // At least one symbol should have a non-empty Signature (proves scoring fields are present)
         Assert.Contains(symbols, s => !string.IsNullOrEmpty(s.Signature));
     }
 
     [Fact]
     public void LoadAllSymbolsReadsSearchIndex_NotFragments()
     {
-        // Arrange: index a project
         var index = CreateTestIndex();
         _store.Save(index);
 
-        // Delete ALL per-file fragment files from the files/ subdirectory
-        var filesDir = StoragePaths.GetFilesDir("searchtest");
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         Assert.True(Directory.Exists(filesDir), "files/ directory should exist after indexing");
 
         var fragmentFiles = Directory.GetFiles(filesDir, "*.json");
@@ -123,13 +108,10 @@ public sealed class SearchIndexTests : IDisposable
             File.Delete(fragment);
         }
 
-        // Verify fragments are gone
         Assert.Empty(Directory.GetFiles(filesDir, "*.json"));
 
-        // Act: LoadAllSymbols should still work because it reads search-index.json
-        var symbols = _store.LoadAllSymbols("searchtest");
+        var symbols = _store.LoadAllSymbols();
 
-        // Assert: proves LoadAllSymbols reads search-index.json, NOT per-file fragments
         Assert.NotNull(symbols);
         Assert.Equal(3, symbols.Count);
         Assert.Contains(symbols, s => s.Name == "MyFunction");
@@ -140,27 +122,22 @@ public sealed class SearchIndexTests : IDisposable
     [Fact]
     public void FindCommandWorksWithoutFragments()
     {
-        // Arrange: index a project, then delete all per-file fragments
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var filesDir = StoragePaths.GetFilesDir("searchtest");
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         foreach (var fragment in Directory.GetFiles(filesDir, "*.json"))
         {
             File.Delete(fragment);
         }
 
-        // Act: replicate FindCommand's exact data loading path
-        // FindCommand does: manifest = store.LoadManifest(name); symbols = store.LoadAllSymbols(name);
-        var manifest = _store.LoadManifest("searchtest");
-        var symbols = _store.LoadAllSymbols("searchtest");
+        var manifest = _store.LoadManifest();
+        var symbols = _store.LoadAllSymbols();
 
-        // Assert: both return valid data even without fragments
         Assert.NotNull(manifest);
         Assert.NotNull(symbols);
         Assert.True(symbols.Count > 0, "LoadAllSymbols should return symbols without fragments");
 
-        // Replicate FindCommand scoring logic to prove search works end-to-end
         var query = "MyFunction";
         var scored = new List<(SearchSymbol symbol, int score)>();
 
@@ -188,7 +165,6 @@ public sealed class SearchIndexTests : IDisposable
 
         var topResults = scored.OrderByDescending(x => x.score).Take(50).ToList();
 
-        // Assert: search finds the function with correct scoring
         Assert.NotEmpty(topResults);
         Assert.Equal("MyFunction", topResults[0].symbol.Name);
         Assert.True(topResults[0].score > 0, "Score should be positive for exact name match");

@@ -11,7 +11,7 @@ internal sealed class DirectoryWalker
     {
         "node_modules", ".git", "bin", "obj", ".vs", ".idea",
         "__pycache__", ".mypy_cache", ".pytest_cache",
-        "dist", "build", ".next", ".nuxt"
+        "dist", "build", ".next", ".nuxt", ".cache"
     };
 
     private readonly LanguageRegistry _registry;

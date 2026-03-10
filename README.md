@@ -34,20 +34,17 @@ The plugin bundles an MCP server (stdio transport) that Claude calls directly â€
 
 | Tool | Description |
 |------|-------------|
-| `token_squeeze_list` | List indexed projects with symbol counts and languages |
-| `token_squeeze_outline` | Show symbols in a file (functions, classes, methods, types) |
-| `token_squeeze_extract` | Get the full source of one or more symbols by ID |
-| `token_squeeze_find` | Search symbols by name, signature, or docstring |
+| `read_file_outline` | Show symbols in a file (functions, classes, methods, types) |
+| `read_symbol_source` | Get the full source of one or more symbols by ID |
+| `search_symbols` | Search symbols by name, signature, or docstring |
 
 ### Skills (slash commands)
 
 | Skill | Description |
 |-------|-------------|
-| `/token-squeeze:index` | Index a directory's symbols |
-| `/token-squeeze:savings` | Estimate how many tokens were saved this session |
-| `/token-squeeze:purge` | Remove an index |
-
-On session start, the plugin auto-indexes the current directory (if not already indexed).
+| `/token-squeeze:index` | Index a directory's symbols (run this first) |
+| `/token-squeeze:explore` | Research how code works by tracing implementations |
+| `/token-squeeze:savings` | Estimate tokens saved this session |
 
 ## Supported Languages
 
@@ -61,4 +58,4 @@ Source files  -->  tree-sitter parser  -->  Symbol index (JSON)
 Claude Code  <--  CLI query commands  <-------+
 ```
 
-Symbols are stored in `~/.token-squeeze/` as JSON indexes alongside raw source snapshots. Claude queries them through the CLI, getting just the symbols it needs instead of reading entire files.
+Symbols are stored in `<project>/.cache/` as JSON indexes alongside raw source snapshots. Each project's index lives alongside its source code. Claude queries them through the CLI, getting just the symbols it needs instead of reading entire files.

@@ -7,17 +7,13 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class IndexCommand(IndexStore store, LanguageRegistry registry) : Command<IndexCommand.Settings>
+internal sealed class IndexCommand(LanguageRegistry registry) : Command<IndexCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
         [CommandArgument(0, "<path>")]
         [Description("The directory path to index")]
         public string Path { get; init; } = string.Empty;
-
-        [CommandOption("--name|-n <NAME>")]
-        [Description("Explicit project name alias")]
-        public string? Name { get; init; }
     }
 
     public override int Execute(CommandContext context, Settings settings, CancellationToken cancellation)
@@ -32,17 +28,18 @@ internal sealed class IndexCommand(IndexStore store, LanguageRegistry registry) 
                 return 1;
             }
 
+            var cacheDir = System.IO.Path.Combine(path, ".cache");
+            var store = new IndexStore(cacheDir);
             var indexer = new ProjectIndexer(store, registry);
 
-            var result = indexer.Index(path, settings.Name);
+            var result = indexer.Index(path);
 
             JsonOutput.Write(new
             {
-                projectName = result.Index.ProjectName,
                 sourcePath = result.Index.SourcePath,
                 filesIndexed = result.Index.Files.Count,
                 symbolsExtracted = result.Index.Symbols.Count,
-                indexPath = StoragePaths.GetManifestPath(result.Index.ProjectName),
+                cacheDir,
                 errorsEncountered = result.ErrorCount
             });
 

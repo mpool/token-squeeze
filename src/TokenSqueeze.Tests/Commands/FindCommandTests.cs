@@ -11,11 +11,6 @@ public sealed class FindCommandTests : IDisposable
 
     private string IndexScoringProject()
     {
-        // Carefully crafted Python source to produce predictable scoring:
-        // - "Foo" exact name match -> 200 + 75 (qualified) + 50 (signature) = 325
-        // - "FooBar" contains "Foo" -> 100 + 75 (qualified) + 50 (signature) = 225
-        // - "unrelated" docstring mentions Foo -> 25
-        // - "another" no relation -> 0 (excluded)
         var sourceDir = _harness.CreateSourceDir("find-scoring", new Dictionary<string, string>
         {
             ["scoring.py"] = "def Foo():\n    \"\"\"A function named exactly Foo\"\"\"\n    pass\n\n" +
@@ -26,20 +21,17 @@ public sealed class FindCommandTests : IDisposable
 
         var (exitCode, output) = _harness.Run("index", sourceDir);
         Assert.Equal(0, exitCode);
-        using var doc = JsonDocument.Parse(output);
-        return doc.RootElement.GetProperty("projectName").GetString()!;
+        return sourceDir;
     }
 
-    private JsonElement RunFind(string projectName, string query, params string[] extraArgs)
+    private JsonElement RunFind(string sourceDir, string query, params string[] extraArgs)
     {
         var args = new List<string> { "find" };
         args.AddRange(extraArgs);
-        args.Add(projectName);
         args.Add(query);
-        var (exitCode, output) = _harness.Run(args.ToArray());
+        var (exitCode, output) = _harness.RunInDir(sourceDir, args.ToArray());
         Assert.Equal(0, exitCode);
         using var doc = JsonDocument.Parse(output);
-        // Return a clone since doc will be disposed
         return doc.RootElement.Clone();
     }
 
@@ -57,44 +49,41 @@ public sealed class FindCommandTests : IDisposable
     [Fact]
     public void ExactMatchScore_Returns325()
     {
-        var projectName = IndexScoringProject();
-        var root = RunFind(projectName, "Foo");
+        var sourceDir = IndexScoringProject();
+        var root = RunFind(sourceDir, "Foo");
 
         var foo = FindResultByName(root, "Foo");
         Assert.NotNull(foo);
-        // Exact(200) + Qualified(75) + Signature(50) + Docstring("...Foo...")(25) = 350
         Assert.Equal(350, foo.Value.GetProperty("score").GetInt32());
     }
 
     [Fact]
     public void ContainsMatchScore_Returns225()
     {
-        var projectName = IndexScoringProject();
-        var root = RunFind(projectName, "Foo");
+        var sourceDir = IndexScoringProject();
+        var root = RunFind(sourceDir, "Foo");
 
         var fooBar = FindResultByName(root, "FooBar");
         Assert.NotNull(fooBar);
-        // Contains(100) + Qualified(75) + Signature(50) + Docstring("...Foo...")(25) = 250
         Assert.Equal(250, fooBar.Value.GetProperty("score").GetInt32());
     }
 
     [Fact]
     public void DocstringOnlyMatch_Returns25()
     {
-        var projectName = IndexScoringProject();
-        var root = RunFind(projectName, "Foo");
+        var sourceDir = IndexScoringProject();
+        var root = RunFind(sourceDir, "Foo");
 
         var unrelated = FindResultByName(root, "unrelated");
         Assert.NotNull(unrelated);
-        // Only docstring contains "Foo" = 25
         Assert.Equal(25, unrelated.Value.GetProperty("score").GetInt32());
     }
 
     [Fact]
     public void NoMatchExcluded_AnotherNotInResults()
     {
-        var projectName = IndexScoringProject();
-        var root = RunFind(projectName, "Foo");
+        var sourceDir = IndexScoringProject();
+        var root = RunFind(sourceDir, "Foo");
 
         var another = FindResultByName(root, "another");
         Assert.Null(another);
@@ -103,8 +92,8 @@ public sealed class FindCommandTests : IDisposable
     [Fact]
     public void ResultOrdering_DescendingByScore()
     {
-        var projectName = IndexScoringProject();
-        var root = RunFind(projectName, "Foo");
+        var sourceDir = IndexScoringProject();
+        var root = RunFind(sourceDir, "Foo");
 
         var results = root.GetProperty("results");
         int previousScore = int.MaxValue;
@@ -119,7 +108,6 @@ public sealed class FindCommandTests : IDisposable
     [Fact]
     public void KindFilter_RestrictsToMatchingKind()
     {
-        // Create source with a class and a function both containing "Alpha"
         var sourceDir = _harness.CreateSourceDir("find-kind", new Dictionary<string, string>
         {
             ["mixed.py"] = """
@@ -131,12 +119,10 @@ def AlphaFunc():
 """
         });
 
-        var (exitCode, output) = _harness.Run("index", sourceDir);
+        var (exitCode, _) = _harness.Run("index", sourceDir);
         Assert.Equal(0, exitCode);
-        using var indexDoc = JsonDocument.Parse(output);
-        var projectName = indexDoc.RootElement.GetProperty("projectName").GetString()!;
 
-        var root = RunFind(projectName, "Alpha", "--kind", "function");
+        var root = RunFind(sourceDir, "Alpha", "--kind", "function");
         var results = root.GetProperty("results");
 
         foreach (var r in results.EnumerateArray())
@@ -144,7 +130,6 @@ def AlphaFunc():
             var kind = r.GetProperty("kind").GetString();
             Assert.Equal("Function", kind);
         }
-        // Should have at least one function result
         Assert.True(results.GetArrayLength() >= 1, "Expected at least one function result");
     }
 
@@ -157,12 +142,10 @@ def AlphaFunc():
             ["subdir2/mod2.py"] = "def Target():\n    pass\n"
         });
 
-        var (exitCode, output) = _harness.Run("index", sourceDir);
+        var (exitCode, _) = _harness.Run("index", sourceDir);
         Assert.Equal(0, exitCode);
-        using var indexDoc = JsonDocument.Parse(output);
-        var projectName = indexDoc.RootElement.GetProperty("projectName").GetString()!;
 
-        var root = RunFind(projectName, "Target", "--path", "subdir1/*");
+        var root = RunFind(sourceDir, "Target", "--path", "subdir1/*");
         var results = root.GetProperty("results");
 
         Assert.True(results.GetArrayLength() >= 1, "Expected at least one result from subdir1");

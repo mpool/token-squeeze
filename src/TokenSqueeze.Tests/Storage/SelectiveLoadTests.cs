@@ -5,38 +5,32 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Storage;
 
-[Collection("CLI")]
 public sealed class SelectiveLoadTests : IDisposable
 {
     private readonly string _tempDir;
-    private readonly string _storageDir;
-    private readonly string? _previousOverride;
+    private readonly string _cacheDir;
     private readonly IndexStore _store;
     private readonly LanguageRegistry _registry;
 
     public SelectiveLoadTests()
     {
-        _previousOverride = StoragePaths.TestRootOverride;
         _tempDir = Path.Combine(Path.GetTempPath(), "ts-selective-" + Guid.NewGuid().ToString("N")[..8]);
-        _storageDir = Path.Combine(Path.GetTempPath(), "ts-selective-store-" + Guid.NewGuid().ToString("N")[..8]);
+        _cacheDir = Path.Combine(Path.GetTempPath(), "ts-selective-store-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_tempDir);
-        Directory.CreateDirectory(_storageDir);
-        StoragePaths.TestRootOverride = _storageDir;
-        _store = new IndexStore();
+        _store = new IndexStore(_cacheDir);
         _registry = new LanguageRegistry();
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = _previousOverride;
         _registry.Dispose();
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
-        if (Directory.Exists(_storageDir))
-            Directory.Delete(_storageDir, recursive: true);
+        if (Directory.Exists(_cacheDir))
+            Directory.Delete(_cacheDir, recursive: true);
     }
 
-    private string CreateMultiFileProject()
+    private void CreateMultiFileProject()
     {
         var sourceDir = Path.Combine(_tempDir, "multifile");
         Directory.CreateDirectory(sourceDir);
@@ -45,9 +39,7 @@ public sealed class SelectiveLoadTests : IDisposable
         File.WriteAllText(Path.Combine(sourceDir, "calc.py"), "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n");
 
         var indexer = new ProjectIndexer(_store, _registry);
-        indexer.Index(sourceDir, "multifile");
-
-        return sourceDir;
+        indexer.Index(sourceDir);
     }
 
     [Fact]
@@ -55,12 +47,12 @@ public sealed class SelectiveLoadTests : IDisposable
     {
         CreateMultiFileProject();
 
-        var greetSymbols = _store.LoadFileSymbols("multifile", "greet.py");
+        var greetSymbols = _store.LoadFileSymbols("greet.py");
         Assert.NotNull(greetSymbols);
         Assert.Single(greetSymbols);
         Assert.Equal("greet", greetSymbols[0].Name);
 
-        var calcSymbols = _store.LoadFileSymbols("multifile", "calc.py");
+        var calcSymbols = _store.LoadFileSymbols("calc.py");
         Assert.NotNull(calcSymbols);
         Assert.Equal(2, calcSymbols.Count);
     }
@@ -70,11 +62,10 @@ public sealed class SelectiveLoadTests : IDisposable
     {
         CreateMultiFileProject();
 
-        var allSymbols = _store.LoadAllSymbols("multifile");
+        var allSymbols = _store.LoadAllSymbols();
         Assert.NotNull(allSymbols);
         Assert.Equal(3, allSymbols.Count); // 1 from greet.py + 2 from calc.py
 
-        // SearchSymbol type does not have ByteOffset/ByteLength/ContentHash fields at all
         foreach (var sym in allSymbols)
         {
             Assert.IsType<SearchSymbol>(sym);
@@ -86,10 +77,10 @@ public sealed class SelectiveLoadTests : IDisposable
     {
         CreateMultiFileProject();
 
-        var manifest = _store.LoadManifest("multifile");
+        var manifest = _store.LoadManifest();
         Assert.NotNull(manifest);
         Assert.IsType<Manifest>(manifest);
         Assert.Equal(2, manifest.Files.Count);
-        Assert.Equal(2, manifest.FormatVersion);
+        Assert.Equal(3, manifest.FormatVersion);
     }
 }

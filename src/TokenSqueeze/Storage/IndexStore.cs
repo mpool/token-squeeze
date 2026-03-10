@@ -7,19 +7,21 @@ namespace TokenSqueeze.Storage;
 
 internal sealed class IndexStore
 {
+    private readonly string _cacheDir;
 
-    public IndexStore()
+    public IndexStore(string cacheDir)
     {
-        StoragePaths.EnsureRootExists();
+        _cacheDir = Path.GetFullPath(cacheDir);
     }
+
+    public string CacheDir => _cacheDir;
 
     public void Save(CodeIndex index)
     {
-        var projectDir = StoragePaths.GetProjectDir(index.ProjectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-        Directory.CreateDirectory(projectDir);
+        Directory.CreateDirectory(_cacheDir);
+        WriteCacheMarkers();
 
-        var filesDir = StoragePaths.GetFilesDir(index.ProjectName);
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         Directory.CreateDirectory(filesDir);
 
         // Group symbols by file
@@ -50,7 +52,8 @@ internal sealed class IndexStore
                 Symbols = symbols
             };
 
-            var fragmentPath = StoragePaths.GetFileFragmentPath(index.ProjectName, storageKey);
+            var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, storageKey);
+            PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
             AtomicWrite(fragmentPath, fragment);
 
             manifestEntries[filePath] = new ManifestFileEntry
@@ -66,23 +69,20 @@ internal sealed class IndexStore
 
         // Write search-index.json (lightweight symbols without ByteOffset/ByteLength/ContentHash)
         var searchSymbols = ProjectSearchSymbols(index.Symbols);
-        var searchIndexPath = StoragePaths.GetSearchIndexPath(index.ProjectName);
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         AtomicWrite(searchIndexPath, searchSymbols);
 
         // Write manifest LAST (crash safety)
         var manifest = new Manifest
         {
-            FormatVersion = 2,
-            ProjectName = index.ProjectName,
+            FormatVersion = 3,
             SourcePath = index.SourcePath,
             IndexedAt = index.IndexedAt,
             Files = manifestEntries
         };
 
-        var manifestPath = StoragePaths.GetManifestPath(index.ProjectName);
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         AtomicWrite(manifestPath, manifest);
-
-        UpdateCatalog();
 
         // Cleanup orphaned fragments
         if (Directory.Exists(filesDir))
@@ -95,23 +95,11 @@ internal sealed class IndexStore
                     File.Delete(file);
             }
         }
-
-        // Delete legacy files
-        var legacyIndexPath = StoragePaths.GetLegacyIndexPath(index.ProjectName);
-        if (File.Exists(legacyIndexPath))
-            File.Delete(legacyIndexPath);
-
-        var legacyMetaPath = StoragePaths.GetMetadataPath(index.ProjectName);
-        if (File.Exists(legacyMetaPath))
-            File.Delete(legacyMetaPath);
     }
 
-    public Manifest? LoadManifest(string projectName)
+    public Manifest? LoadManifest()
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         if (!File.Exists(manifestPath))
             return null;
 
@@ -119,21 +107,22 @@ internal sealed class IndexStore
         return JsonSerializer.Deserialize<Manifest>(json, JsonDefaults.Options);
     }
 
-    public List<Symbol>? LoadFileSymbols(string projectName, string filePath)
+    public List<Symbol>? LoadFileSymbols(string filePath)
     {
-        var manifest = LoadManifest(projectName);
+        var manifest = LoadManifest();
         if (manifest is null)
             return null;
 
-        return LoadFileSymbols(projectName, filePath, manifest);
+        return LoadFileSymbols(filePath, manifest);
     }
 
-    public List<Symbol>? LoadFileSymbols(string projectName, string filePath, Manifest manifest)
+    public List<Symbol>? LoadFileSymbols(string filePath, Manifest manifest)
     {
         if (!manifest.Files.TryGetValue(filePath, out var entry))
             return null;
 
-        var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, entry.StorageKey);
+        var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, entry.StorageKey);
+        PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
         if (!File.Exists(fragmentPath))
             return null;
 
@@ -142,12 +131,9 @@ internal sealed class IndexStore
         return fragment?.Symbols;
     }
 
-    public List<SearchSymbol>? LoadAllSymbols(string projectName)
+    public List<SearchSymbol>? LoadAllSymbols()
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var searchIndexPath = StoragePaths.GetSearchIndexPath(projectName);
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         if (!File.Exists(searchIndexPath))
             return null;
 
@@ -155,179 +141,77 @@ internal sealed class IndexStore
         return JsonSerializer.Deserialize<List<SearchSymbol>>(json, JsonDefaults.Options);
     }
 
-    public ProjectMetadata? LoadMetadata(string projectName)
+    public CodeIndex? Load()
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var metaPath = StoragePaths.GetMetadataPath(projectName);
-        if (!File.Exists(metaPath))
+        var manifest = LoadManifest();
+        if (manifest is null)
             return null;
 
-        var json = File.ReadAllText(metaPath);
-        return JsonSerializer.Deserialize<ProjectMetadata>(json, JsonDefaults.Options);
-    }
+        var allSymbols = new List<Symbol>();
+        var allFiles = new Dictionary<string, IndexedFile>();
 
-    public CodeIndex? Load(string projectName)
-    {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        // Try new split format first
-        var manifest = LoadManifest(projectName);
-        if (manifest is not null)
+        foreach (var (filePath, entry) in manifest.Files)
         {
-            var allSymbols = new List<Symbol>();
-            var allFiles = new Dictionary<string, IndexedFile>();
-
-            foreach (var (filePath, entry) in manifest.Files)
+            allFiles[filePath] = new IndexedFile
             {
-                allFiles[filePath] = new IndexedFile
-                {
-                    Path = entry.Path,
-                    Hash = entry.Hash,
-                    Language = entry.Language,
-                    SymbolCount = entry.SymbolCount,
-                    LastModifiedUtc = entry.LastModifiedUtc
-                };
-
-                var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, entry.StorageKey);
-                if (File.Exists(fragmentPath))
-                {
-                    var fragJson = File.ReadAllText(fragmentPath);
-                    var fragment = JsonSerializer.Deserialize<FileSymbolData>(fragJson, JsonDefaults.Options);
-                    if (fragment?.Symbols is not null)
-                        allSymbols.AddRange(fragment.Symbols);
-                }
-            }
-
-            return new CodeIndex
-            {
-                ProjectName = manifest.ProjectName,
-                SourcePath = manifest.SourcePath,
-                IndexedAt = manifest.IndexedAt,
-                Files = allFiles,
-                Symbols = allSymbols
+                Path = entry.Path,
+                Hash = entry.Hash,
+                Language = entry.Language,
+                SymbolCount = entry.SymbolCount,
+                LastModifiedUtc = entry.LastModifiedUtc
             };
+
+            var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, entry.StorageKey);
+            PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
+            if (File.Exists(fragmentPath))
+            {
+                var fragJson = File.ReadAllText(fragmentPath);
+                var fragment = JsonSerializer.Deserialize<FileSymbolData>(fragJson, JsonDefaults.Options);
+                if (fragment?.Symbols is not null)
+                    allSymbols.AddRange(fragment.Symbols);
+            }
         }
 
-        // Legacy fallback: old monolithic index.json
-        var indexPath = StoragePaths.GetLegacyIndexPath(projectName);
-        if (!File.Exists(indexPath))
-            return null;
-
-        var json = File.ReadAllText(indexPath);
-        return JsonSerializer.Deserialize<CodeIndex>(json, JsonDefaults.Options);
+        return new CodeIndex
+        {
+            SourcePath = manifest.SourcePath,
+            IndexedAt = manifest.IndexedAt,
+            Files = allFiles,
+            Symbols = allSymbols
+        };
     }
 
-    public bool IsLegacyFormat(string projectName)
+    public void DeleteFileFragment(string storageKey)
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
-        var indexPath = StoragePaths.GetLegacyIndexPath(projectName);
-
-        return !File.Exists(manifestPath) && File.Exists(indexPath);
-    }
-
-    public string? GetLegacySourcePath(string projectName)
-    {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var indexPath = StoragePaths.GetLegacyIndexPath(projectName);
-        if (!File.Exists(indexPath))
-            return null;
-
-        using var stream = File.OpenRead(indexPath);
-        using var doc = JsonDocument.Parse(stream);
-
-        if (doc.RootElement.TryGetProperty("sourcePath", out var prop))
-            return prop.GetString();
-
-        return null;
-    }
-
-    public ManifestHeader? LoadManifestHeader(string projectName)
-    {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
-        if (!File.Exists(manifestPath))
-            return null;
-
-        var json = File.ReadAllText(manifestPath);
-        return JsonSerializer.Deserialize<ManifestHeader>(json, JsonDefaults.Options);
-    }
-
-    public List<string> ListProjects()
-    {
-        if (!Directory.Exists(StoragePaths.RootDir))
-            return [];
-
-        return Directory.GetDirectories(StoragePaths.RootDir)
-            .Select(Path.GetFileName)
-            .Where(name => name is not null)
-            .Select(name => name!)
-            .ToList();
-    }
-
-    public void Delete(string projectName)
-    {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-        if (Directory.Exists(projectDir))
-            Directory.Delete(projectDir, recursive: true);
-
-        UpdateCatalog();
-    }
-
-    public void DeleteFileFragment(string projectName, string storageKey)
-    {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, storageKey);
-        PathValidator.ValidateWithinRoot(fragmentPath, StoragePaths.GetFilesDir(projectName));
+        var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, storageKey);
+        PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
 
         if (File.Exists(fragmentPath))
             File.Delete(fragmentPath);
     }
 
-    public void SaveFileFragment(string projectName, string storageKey, FileSymbolData fragment)
+    public void SaveFileFragment(string storageKey, FileSymbolData fragment)
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, storageKey);
-        PathValidator.ValidateWithinRoot(fragmentPath, StoragePaths.GetFilesDir(projectName));
+        var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, storageKey);
+        PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
 
         AtomicWrite(fragmentPath, fragment);
     }
 
-    public void SaveManifest(string projectName, Manifest manifest)
+    public void SaveManifest(Manifest manifest)
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         AtomicWrite(manifestPath, manifest);
-
-        UpdateCatalog();
     }
 
-    public void RebuildSearchIndex(string projectName, Manifest manifest)
+    public void RebuildSearchIndex(Manifest manifest)
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
         var allSymbols = new List<Symbol>();
 
         foreach (var (_, entry) in manifest.Files)
         {
-            var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, entry.StorageKey);
+            var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, entry.StorageKey);
+            PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
             if (!File.Exists(fragmentPath))
                 continue;
 
@@ -338,11 +222,11 @@ internal sealed class IndexStore
         }
 
         var searchSymbols = ProjectSearchSymbols(allSymbols);
-        var searchIndexPath = StoragePaths.GetSearchIndexPath(projectName);
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         AtomicWrite(searchIndexPath, searchSymbols);
 
         // Write updated manifest
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         AtomicWrite(manifestPath, manifest);
     }
 
@@ -351,17 +235,14 @@ internal sealed class IndexStore
     /// then append fresh symbols from their fragments. Falls back to full rebuild
     /// if the existing search index is missing.
     /// </summary>
-    public void UpdateSearchIndex(string projectName, Manifest manifest, HashSet<string> affectedFiles)
+    public void UpdateSearchIndex(Manifest manifest, HashSet<string> affectedFiles)
     {
-        var projectDir = StoragePaths.GetProjectDir(projectName);
-        PathValidator.ValidateWithinRoot(projectDir, StoragePaths.RootDir);
-
-        var searchIndexPath = StoragePaths.GetSearchIndexPath(projectName);
+        var searchIndexPath = StoragePaths.GetSearchIndexPath(_cacheDir);
 
         // If no existing search index, fall back to full rebuild
         if (!File.Exists(searchIndexPath))
         {
-            RebuildSearchIndex(projectName, manifest);
+            RebuildSearchIndex(manifest);
             return;
         }
 
@@ -374,9 +255,10 @@ internal sealed class IndexStore
         foreach (var file in affectedFiles)
         {
             if (!manifest.Files.TryGetValue(file, out var entry))
-                continue; // deleted file — no fragment to add
+                continue; // deleted file -- no fragment to add
 
-            var fragmentPath = StoragePaths.GetFileFragmentPath(projectName, entry.StorageKey);
+            var fragmentPath = StoragePaths.GetFileFragmentPath(_cacheDir, entry.StorageKey);
+            PathValidator.ValidateWithinRoot(fragmentPath, _cacheDir);
             if (!File.Exists(fragmentPath))
                 continue;
 
@@ -392,50 +274,31 @@ internal sealed class IndexStore
         AtomicWrite(searchIndexPath, kept.ToArray());
 
         // Write updated manifest
-        var manifestPath = StoragePaths.GetManifestPath(projectName);
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         AtomicWrite(manifestPath, manifest);
+    }
+
+    private void WriteCacheMarkers()
+    {
+        var tagPath = Path.Combine(_cacheDir, "CACHEDIR.TAG");
+        if (!File.Exists(tagPath))
+        {
+            File.WriteAllText(tagPath,
+                "Signature: 8a477f597d28d172789f06886806bc55\n" +
+                "# This file is a cache directory tag created by TokenSqueeze.\n" +
+                "# For information see https://bford.info/cachedir/\n");
+        }
+
+        var gitignorePath = Path.Combine(_cacheDir, ".gitignore");
+        if (!File.Exists(gitignorePath))
+        {
+            File.WriteAllText(gitignorePath, "*\n");
+        }
     }
 
     private static SearchSymbol[] ProjectSearchSymbols(IEnumerable<Symbol> symbols)
     {
         return symbols.Select(s => s.ToSearchSymbol()).ToArray();
-    }
-
-    /// <summary>
-    /// Rebuild catalog.json from all project manifests on disk.
-    /// Called after Save, SaveManifest, and Delete to keep the catalog in sync.
-    /// </summary>
-    private void UpdateCatalog()
-    {
-        var projectNames = ListProjects();
-        var projects = new List<object>();
-
-        foreach (var name in projectNames)
-        {
-            var header = LoadManifestHeader(name);
-            if (header is not null)
-            {
-                projects.Add(new
-                {
-                    name = header.ProjectName,
-                    sourcePath = header.SourcePath,
-                    indexedAt = header.IndexedAt
-                });
-            }
-        }
-
-        var json = JsonSerializer.Serialize(new { projects }, JsonDefaults.Options);
-        AtomicWriteRaw(StoragePaths.CatalogPath, json);
-    }
-
-    /// <summary>
-    /// Load catalog.json as a raw JSON string — no deserialization needed by list command.
-    /// Returns null if catalog doesn't exist (will be rebuilt on next index).
-    /// </summary>
-    public string? LoadCatalogJson()
-    {
-        var path = StoragePaths.CatalogPath;
-        return File.Exists(path) ? File.ReadAllText(path) : null;
     }
 
     internal static void AtomicWriteRaw(string targetPath, string json)

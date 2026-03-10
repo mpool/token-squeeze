@@ -4,7 +4,7 @@ namespace TokenSqueeze.Tests.Helpers;
 
 public static class TestIndexBuilder
 {
-    public static CodeIndex Create(string projectName, string sourcePath, params Symbol[] symbols)
+    public static CodeIndex Create(string sourcePath, params Symbol[] symbols)
     {
         var symbolList = symbols.ToList();
         var files = symbolList
@@ -21,7 +21,6 @@ public static class TestIndexBuilder
 
         return new CodeIndex
         {
-            ProjectName = projectName,
             SourcePath = sourcePath,
             IndexedAt = DateTime.UtcNow,
             Files = files,
