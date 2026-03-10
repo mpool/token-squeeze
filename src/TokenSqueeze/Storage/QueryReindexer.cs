@@ -6,9 +6,9 @@ namespace TokenSqueeze.Storage;
 
 internal static class QueryReindexer
 {
-    public static Manifest? EnsureFresh(string projectName, IndexStore store, LanguageRegistry registry, CancellationToken cancellation = default)
+    public static Manifest? EnsureFresh(IndexStore store, LanguageRegistry registry, CancellationToken cancellation = default)
     {
-        var manifest = store.LoadManifest(projectName);
+        var manifest = store.LoadManifest();
         if (manifest is null)
             return null;
 
@@ -17,7 +17,7 @@ internal static class QueryReindexer
         {
             // Persist mtime corrections so we don't re-hash these files on the next query
             if (result.MtimeUpdated)
-                store.SaveManifest(projectName, manifest);
+                store.SaveManifest(manifest);
 
             return manifest;
         }

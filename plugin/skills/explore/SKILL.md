@@ -1,6 +1,6 @@
 ---
 name: token-squeeze:explore
-description: Explore and document how a codebase feature or component works using token-squeeze indexed symbols
+description: Explore, research, or trace how code works — how features are implemented, how components connect, how data flows through the system. Use when the user asks to understand, investigate, map, or walk through any part of the codebase.
 argument-hint: "[question or topic]"
 ---
 
@@ -12,7 +12,7 @@ You are exploring a codebase using token-squeeze for token-efficient symbol retr
 
 ## Step 1 — Validate Index
 
-Call `list_projects` (via the token-squeeze MCP tool) to confirm an index exists. If no index exists, tell the user to run `/token-squeeze:index` first and stop.
+Use `search_symbols` with a broad query (e.g. the user's topic) to confirm an index exists. If the MCP server returns "No index found", tell the user to run `/token-squeeze:index` first and stop.
 
 ## Step 2 — Understand the Question
 

@@ -5,30 +5,24 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Storage;
 
-[Collection("CLI")]
 public sealed class SplitStorageTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly string? _previousOverride;
+    private readonly string _cacheDir;
     private readonly IndexStore _store;
 
     public SplitStorageTests()
     {
-        _previousOverride = StoragePaths.TestRootOverride;
-        _tempDir = Path.Combine(Path.GetTempPath(), "ts-split-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        StoragePaths.TestRootOverride = _tempDir;
-        _store = new IndexStore();
+        _cacheDir = Path.Combine(Path.GetTempPath(), "ts-split-" + Guid.NewGuid().ToString("N"));
+        _store = new IndexStore(_cacheDir);
     }
 
     public void Dispose()
     {
-        StoragePaths.TestRootOverride = _previousOverride;
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (Directory.Exists(_cacheDir))
+            Directory.Delete(_cacheDir, recursive: true);
     }
 
-    private static CodeIndex CreateTestIndex(string projectName = "testproj", params (string file, string lang)[] files)
+    private static CodeIndex CreateTestIndex(params (string file, string lang)[] files)
     {
         if (files.Length == 0)
             files = [("src/main.cs", "C#"), ("src/utils.cs", "C#")];
@@ -66,8 +60,7 @@ public sealed class SplitStorageTests : IDisposable
 
         return new CodeIndex
         {
-            ProjectName = projectName,
-            SourcePath = "/tmp/" + projectName,
+            SourcePath = "/tmp/testproj",
             IndexedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             Files = indexedFiles,
             Symbols = symbols
@@ -75,19 +68,18 @@ public sealed class SplitStorageTests : IDisposable
     }
 
     [Fact]
-    public void Save_CreatesManifestWithFormatVersion2()
+    public void Save_CreatesManifestWithFormatVersion3()
     {
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var manifestPath = StoragePaths.GetManifestPath("testproj");
+        var manifestPath = StoragePaths.GetManifestPath(_cacheDir);
         Assert.True(File.Exists(manifestPath), "manifest.json should exist");
 
         var json = File.ReadAllText(manifestPath);
         var manifest = JsonSerializer.Deserialize<Manifest>(json, JsonDefaults.Options);
         Assert.NotNull(manifest);
-        Assert.Equal(2, manifest.FormatVersion);
-        Assert.Equal("testproj", manifest.ProjectName);
+        Assert.Equal(3, manifest.FormatVersion);
         Assert.Equal(2, manifest.Files.Count);
     }
 
@@ -97,21 +89,11 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var filesDir = StoragePaths.GetFilesDir("testproj");
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         Assert.True(Directory.Exists(filesDir), "files/ directory should exist");
 
         var fragments = Directory.GetFiles(filesDir, "*.json");
         Assert.Equal(2, fragments.Length);
-    }
-
-    [Fact]
-    public void Save_DoesNotCreateLegacyIndexJson()
-    {
-        var index = CreateTestIndex();
-        _store.Save(index);
-
-        var legacyPath = StoragePaths.GetLegacyIndexPath("testproj");
-        Assert.False(File.Exists(legacyPath), "index.json should NOT exist after split save");
     }
 
     [Fact]
@@ -120,7 +102,7 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var searchPath = StoragePaths.GetSearchIndexPath("testproj");
+        var searchPath = StoragePaths.GetSearchIndexPath(_cacheDir);
         Assert.True(File.Exists(searchPath), "search-index.json should exist");
 
         var json = File.ReadAllText(searchPath);
@@ -142,9 +124,8 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var loaded = _store.Load("testproj");
+        var loaded = _store.Load();
         Assert.NotNull(loaded);
-        Assert.Equal(index.ProjectName, loaded.ProjectName);
         Assert.Equal(index.SourcePath, loaded.SourcePath);
         Assert.Equal(index.IndexedAt, loaded.IndexedAt);
         Assert.Equal(index.Files.Count, loaded.Files.Count);
@@ -166,17 +147,17 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var manifest = _store.LoadManifest("testproj");
+        var manifest = _store.LoadManifest();
         Assert.NotNull(manifest);
-        Assert.Equal(2, manifest.FormatVersion);
-        Assert.Equal("testproj", manifest.ProjectName);
+        Assert.Equal(3, manifest.FormatVersion);
         Assert.Equal(2, manifest.Files.Count);
     }
 
     [Fact]
     public void LoadManifest_ReturnsNullForMissingProject()
     {
-        var manifest = _store.LoadManifest("nonexistent");
+        var nonexistentStore = new IndexStore(Path.Combine(_cacheDir, "nonexistent"));
+        var manifest = nonexistentStore.LoadManifest();
         Assert.Null(manifest);
     }
 
@@ -186,7 +167,7 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var symbols = _store.LoadFileSymbols("testproj", "src/main.cs");
+        var symbols = _store.LoadFileSymbols("src/main.cs");
         Assert.NotNull(symbols);
         Assert.Single(symbols);
         Assert.Equal("src/main.cs", symbols[0].File);
@@ -198,7 +179,7 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var symbols = _store.LoadFileSymbols("testproj", "nonexistent.cs");
+        var symbols = _store.LoadFileSymbols("nonexistent.cs");
         Assert.Null(symbols);
     }
 
@@ -208,7 +189,7 @@ public sealed class SplitStorageTests : IDisposable
         var index = CreateTestIndex();
         _store.Save(index);
 
-        var symbols = _store.LoadAllSymbols("testproj");
+        var symbols = _store.LoadAllSymbols();
         Assert.NotNull(symbols);
         Assert.Equal(2, symbols.Count);
 
@@ -222,7 +203,8 @@ public sealed class SplitStorageTests : IDisposable
     [Fact]
     public void LoadAllSymbols_ReturnsNullForMissingProject()
     {
-        var symbols = _store.LoadAllSymbols("nonexistent");
+        var nonexistentStore = new IndexStore(Path.Combine(_cacheDir, "nonexistent"));
+        var symbols = nonexistentStore.LoadAllSymbols();
         Assert.Null(symbols);
     }
 
@@ -230,14 +212,14 @@ public sealed class SplitStorageTests : IDisposable
     public void Save_CleansUpOrphanedFragments()
     {
         // First save with two files
-        var index1 = CreateTestIndex("testproj", ("src/main.cs", "C#"), ("src/utils.cs", "C#"));
+        var index1 = CreateTestIndex(("src/main.cs", "C#"), ("src/utils.cs", "C#"));
         _store.Save(index1);
 
-        var filesDir = StoragePaths.GetFilesDir("testproj");
+        var filesDir = StoragePaths.GetFilesDir(_cacheDir);
         Assert.Equal(2, Directory.GetFiles(filesDir, "*.json").Length);
 
         // Second save with only one file
-        var index2 = CreateTestIndex("testproj", ("src/main.cs", "C#"));
+        var index2 = CreateTestIndex(("src/main.cs", "C#"));
         _store.Save(index2);
 
         var remaining = Directory.GetFiles(filesDir, "*.json");
@@ -245,35 +227,54 @@ public sealed class SplitStorageTests : IDisposable
     }
 
     [Fact]
-    public void Load_FallsBackToLegacyIndexJson()
+    public void Constructor_DoesNotCreateDirectory()
     {
-        // Write old-style index.json manually
-        var projectDir = StoragePaths.GetProjectDir("legacy");
-        Directory.CreateDirectory(projectDir);
-
-        var legacyIndex = CreateTestIndex("legacy", ("old.py", "Python"));
-        var json = JsonSerializer.Serialize(legacyIndex, JsonDefaults.Options);
-        File.WriteAllText(Path.Combine(projectDir, "index.json"), json);
-
-        var loaded = _store.Load("legacy");
-        Assert.NotNull(loaded);
-        Assert.Equal("legacy", loaded.ProjectName);
-        Assert.Single(loaded.Symbols);
+        var dir = Path.Combine(Path.GetTempPath(), "ts-ctor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new IndexStore(dir);
+            Assert.False(Directory.Exists(dir), "Constructor must not create cache directory");
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
     }
 
     [Fact]
-    public void Save_DeletesLegacyFiles()
+    public void Save_WritesCachedirTag()
     {
-        // Create legacy files first
-        var projectDir = StoragePaths.GetProjectDir("testproj");
-        Directory.CreateDirectory(projectDir);
-        File.WriteAllText(Path.Combine(projectDir, "index.json"), "{}");
-        File.WriteAllText(Path.Combine(projectDir, "metadata.json"), "{}");
+        var index = CreateTestIndex();
+        _store.Save(index);
+        var tagPath = Path.Combine(_cacheDir, "CACHEDIR.TAG");
+        Assert.True(File.Exists(tagPath));
+        var content = File.ReadAllText(tagPath);
+        Assert.StartsWith("Signature: 8a477f597d28d172789f06886806bc55", content);
+    }
+
+    [Fact]
+    public void Save_WritesGitignore()
+    {
+        var index = CreateTestIndex();
+        _store.Save(index);
+        var gitignorePath = Path.Combine(_cacheDir, ".gitignore");
+        Assert.True(File.Exists(gitignorePath));
+        Assert.Equal("*\n", File.ReadAllText(gitignorePath));
+    }
+
+    [Fact]
+    public void Save_DoesNotOverwriteExistingMarkers()
+    {
+        Directory.CreateDirectory(_cacheDir);
+        var tagPath = Path.Combine(_cacheDir, "CACHEDIR.TAG");
+        var gitignorePath = Path.Combine(_cacheDir, ".gitignore");
+        File.WriteAllText(tagPath, "custom content");
+        File.WriteAllText(gitignorePath, "custom ignore");
 
         var index = CreateTestIndex();
         _store.Save(index);
 
-        Assert.False(File.Exists(Path.Combine(projectDir, "index.json")));
-        Assert.False(File.Exists(Path.Combine(projectDir, "metadata.json")));
+        Assert.Equal("custom content", File.ReadAllText(tagPath));
+        Assert.Equal("custom ignore", File.ReadAllText(gitignorePath));
     }
 }

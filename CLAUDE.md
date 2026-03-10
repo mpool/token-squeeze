@@ -32,8 +32,6 @@ token-squeeze/
 │   ├── .mcp.json                  # MCP server registration (stdio)
 │   ├── mcp-server.js              # MCP server wrapping CLI binary
 │   ├── skills/                    # Skill definitions
-│   ├── hooks/                     # Hooks (auto-index on session start)
-│   ├── scripts/                   # Hook helper scripts
 │   ├── bin/                       # Published platform binaries
 │   └── build.sh                   # Cross-platform build script
 ├── installer/                     # npx installer (copies plugin to ~/.claude/)
@@ -60,7 +58,7 @@ dotnet publish src/TokenSqueeze/TokenSqueeze.csproj -c Release -r osx-arm64 --se
 - **Target:** net9.0
 - **CLI framework:** Spectre.Console.Cli
 - **Parsing:** TreeSitter.DotNet
-- **Storage:** `~/.token-squeeze/` (JSON index + raw files)
+- **Storage:** `<cwd>/.cache/` (JSON index + raw files, per-project local cache)
 
 ### Output Rules (critical)
 
@@ -81,11 +79,9 @@ dotnet publish src/TokenSqueeze/TokenSqueeze.csproj -c Release -r osx-arm64 --se
 | Command | Description |
 |---------|-------------|
 | `index <path>` | Index a local folder |
-| `list` | List indexed folders |
-| `purge <name>` | Delete index for a folder |
-| `outline <name> <file>` | Show symbols in a file |
-| `extract <name> <id>` | Get full source of a symbol |
-| `find <name> <query>` | Search symbols by query |
+| `outline <file>` | Show symbols in a file (resolves .cache from cwd) |
+| `extract [id]` | Get full source of a symbol (resolves .cache from cwd) |
+| `find <query>` | Search symbols by query (resolves .cache from cwd) |
 
 ## Languages Supported
 

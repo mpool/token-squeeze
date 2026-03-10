@@ -1,6 +1,6 @@
 {
   "name": "token-squeeze",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "description": "Codebase indexing and symbol retrieval plugin for Claude Code token optimization",
   "author": {
     "name": "Max Pool"

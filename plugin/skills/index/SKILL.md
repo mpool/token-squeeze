@@ -30,8 +30,8 @@ If no path argument is provided, default to the current working directory.
 ## Output
 
 The command outputs JSON. Present a summary to the user showing:
-- Project name assigned
 - Number of files indexed
 - Languages detected
+- Cache location
 
-Example: "Indexed 42 files (Python, TypeScript) as project 'my-project'."
+Then offer: "Want me to add `.cache/` to your `.gitignore`?"

@@ -9,15 +9,11 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Commands;
 
-internal sealed class ExtractCommand(IndexStore store, LanguageRegistry registry) : Command<ExtractCommand.Settings>
+internal sealed class ExtractCommand(LanguageRegistry registry) : Command<ExtractCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
-        [CommandArgument(0, "<name>")]
-        [Description("The name of the indexed folder")]
-        public string Name { get; init; } = string.Empty;
-
-        [CommandArgument(1, "[id]")]
+        [CommandArgument(0, "[id]")]
         [Description("The symbol ID to extract")]
         public string? Id { get; init; }
 
@@ -30,20 +26,19 @@ internal sealed class ExtractCommand(IndexStore store, LanguageRegistry registry
     {
         try
         {
-        // Legacy migration
-        if (LegacyMigration.TryMigrateIfNeeded(settings.Name, store, registry, out var migrationError))
+        var cacheDir = Path.Combine(Directory.GetCurrentDirectory(), ".cache");
+        if (!Directory.Exists(cacheDir))
         {
-            if (migrationError is not null)
-            {
-                JsonOutput.WriteError(migrationError);
-                return 1;
-            }
+            JsonOutput.WriteError("No index found. Run /token-squeeze:index");
+            return 1;
         }
 
-        var manifest = QueryReindexer.EnsureFresh(settings.Name, store, registry, cancellation);
+        var store = new IndexStore(cacheDir);
+
+        var manifest = QueryReindexer.EnsureFresh(store, registry, cancellation);
         if (manifest is null)
         {
-            JsonOutput.WriteError($"Project not found: {settings.Name}");
+            JsonOutput.WriteError("No index found. Run /token-squeeze:index");
             return 1;
         }
 
@@ -84,7 +79,7 @@ internal sealed class ExtractCommand(IndexStore store, LanguageRegistry registry
         var symbolById = new Dictionary<string, Symbol>(StringComparer.Ordinal);
         foreach (var filePath in idsByFile.Keys)
         {
-            var fileSymbols = store.LoadFileSymbols(settings.Name, filePath, manifest);
+            var fileSymbols = store.LoadFileSymbols(filePath, manifest);
             if (fileSymbols is not null)
             {
                 foreach (var sym in fileSymbols)

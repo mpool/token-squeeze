@@ -20,21 +20,19 @@ public sealed class QueryErrorTests : IDisposable
         var (exitCode, output) = _harness.Run("index", sourceDir);
         Assert.Equal(0, exitCode);
 
-        using var doc = JsonDocument.Parse(output);
-        var projectName = doc.RootElement.GetProperty("projectName").GetString()!;
-
         // Corrupt the manifest so QueryReindexer.EnsureFresh will throw on deserialization
-        File.WriteAllText(StoragePaths.GetManifestPath(projectName), "CORRUPT");
+        var cacheDir = Path.Combine(sourceDir, ".cache");
+        File.WriteAllText(StoragePaths.GetManifestPath(cacheDir), "CORRUPT");
 
-        return projectName;
+        return sourceDir;
     }
 
     [Fact]
     public void FindCommand_ReturnsJsonError_WhenReindexFails()
     {
-        var projectName = IndexAndCorrupt();
+        var sourceDir = IndexAndCorrupt();
 
-        var (exitCode, output) = _harness.Run("find", projectName, "foo");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "find", "foo");
 
         Assert.Equal(1, exitCode);
         using var doc = JsonDocument.Parse(output);
@@ -44,9 +42,9 @@ public sealed class QueryErrorTests : IDisposable
     [Fact]
     public void ExtractCommand_ReturnsJsonError_WhenReindexFails()
     {
-        var projectName = IndexAndCorrupt();
+        var sourceDir = IndexAndCorrupt();
 
-        var (exitCode, output) = _harness.Run("extract", projectName, "any-id");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "extract", "any-id");
 
         Assert.Equal(1, exitCode);
         using var doc = JsonDocument.Parse(output);
@@ -56,9 +54,9 @@ public sealed class QueryErrorTests : IDisposable
     [Fact]
     public void OutlineCommand_ReturnsJsonError_WhenReindexFails()
     {
-        var projectName = IndexAndCorrupt();
+        var sourceDir = IndexAndCorrupt();
 
-        var (exitCode, output) = _harness.Run("outline", projectName, "test.py");
+        var (exitCode, output) = _harness.RunInDir(sourceDir, "outline", "test.py");
 
         Assert.Equal(1, exitCode);
         using var doc = JsonDocument.Parse(output);

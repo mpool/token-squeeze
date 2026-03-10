@@ -2,81 +2,38 @@ using TokenSqueeze.Storage;
 
 namespace TokenSqueeze.Tests.Storage;
 
-[Collection("CLI")]
-public sealed class StoragePathsTests : IDisposable
+public sealed class StoragePathsTests
 {
-    private readonly string _tempDir;
-    private readonly string? _previousOverride;
-
-    public StoragePathsTests()
-    {
-        _previousOverride = StoragePaths.TestRootOverride;
-        _tempDir = Path.Combine(Path.GetTempPath(), "ts-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempDir);
-        StoragePaths.TestRootOverride = _tempDir;
-    }
-
-    public void Dispose()
-    {
-        StoragePaths.TestRootOverride = _previousOverride;
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
-    }
-
     [Fact]
     public void GetManifestPath_ReturnsManifestJson()
     {
-        var path = StoragePaths.GetManifestPath("myproject");
-        Assert.Equal(Path.Combine(_tempDir, "myproject", "manifest.json"), path);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "test-cache");
+        var path = StoragePaths.GetManifestPath(cacheDir);
+        Assert.Equal(Path.Combine(cacheDir, "manifest.json"), path);
     }
 
     [Fact]
     public void GetFilesDir_ReturnsFilesSubdirectory()
     {
-        var path = StoragePaths.GetFilesDir("myproject");
-        Assert.Equal(Path.Combine(_tempDir, "myproject", "files"), path);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "test-cache");
+        var path = StoragePaths.GetFilesDir(cacheDir);
+        Assert.Equal(Path.Combine(cacheDir, "files"), path);
     }
 
     [Fact]
     public void GetFileFragmentPath_ReturnsCorrectPath()
     {
-        var path = StoragePaths.GetFileFragmentPath("myproject", "src-main-cs");
-        Assert.Equal(Path.Combine(_tempDir, "myproject", "files", "src-main-cs.json"), path);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "test-cache");
+        var path = StoragePaths.GetFileFragmentPath(cacheDir, "src-main-cs");
+        Assert.Equal(Path.Combine(cacheDir, "files", "src-main-cs.json"), path);
     }
 
     [Fact]
     public void GetSearchIndexPath_ReturnsSearchIndexJson()
     {
-        var path = StoragePaths.GetSearchIndexPath("myproject");
-        Assert.Equal(Path.Combine(_tempDir, "myproject", "search-index.json"), path);
-    }
-
-    [Fact]
-    public void GetLegacyIndexPath_ReturnsIndexJson()
-    {
-        var path = StoragePaths.GetLegacyIndexPath("myproject");
-        Assert.Equal(Path.Combine(_tempDir, "myproject", "index.json"), path);
-    }
-
-    [Fact]
-    public void GetLegacyIndexPath_IsDistinctFromCurrentFormatPaths()
-    {
-        var legacyPath = StoragePaths.GetLegacyIndexPath("myproject");
-        var manifestPath = StoragePaths.GetManifestPath("myproject");
-        var searchIndexPath = StoragePaths.GetSearchIndexPath("myproject");
-
-        Assert.NotEqual(legacyPath, manifestPath);
-        Assert.NotEqual(legacyPath, searchIndexPath);
-    }
-
-    [Fact]
-    public void GetIndexPath_DoesNotExist()
-    {
-        // GetIndexPath was removed — it returned the same path as GetLegacyIndexPath (BUG-03).
-        // This test verifies the method no longer exists via reflection.
-        var method = typeof(StoragePaths).GetMethod("GetIndexPath",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        Assert.Null(method);
+        var cacheDir = Path.Combine(Path.GetTempPath(), "test-cache");
+        var path = StoragePaths.GetSearchIndexPath(cacheDir);
+        Assert.Equal(Path.Combine(cacheDir, "search-index.json"), path);
     }
 
     [Theory]
